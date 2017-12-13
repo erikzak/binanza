@@ -10,7 +10,7 @@ Disclaimer
 
 Do not use this if you want to make money. I have no idea what I am doing.
 
-![Dog](https://i.imgur.com/l3v4P3s.jpg)
+<img src=https://i.imgur.com/4A2NNQs.gifv alt="Cryptomonkey" title="Cryptomonkey" style="width=50%" />
 
 Usage
 -----
