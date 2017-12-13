@@ -7,17 +7,20 @@ from binanza import Binanza
 
 def main():
 	try:
+		
 		# Get API key and secret (replace with own values)
 		f = open(os.path.join(sys.path[0], "key.txt"))
 		for line in f:
 			key, secret = [s.strip() for s in line.split(",")]
 			break
 		f.close()
+
 		# Get gmail auth (remove or replace with own values)
 		f = open(os.path.join(sys.path[0], "gmail.txt"))
 		for line in f:
 			gmail_user, gmail_pass, recipient = [s.strip() for s in line.split(",")]
 		f.close()
+
 		# Create Binanza object: key and secret is required, all other params are optional and can be left out
 		binanza = Binanza(
 			key,
@@ -45,6 +48,7 @@ def main():
 				"orders_to": [recipient]
 			}
 		)
+
 		# Specify which symbol pairs to trade, where the candlestick patterns
 		# of the buy symbol are analyzed for favorable buy/sell situations and
 		# the base symbol is used as the order currency.
@@ -58,8 +62,10 @@ def main():
 			"buy": "XRP",
 			"base": "ETH"
 		}]
+
 		# Start trading
 		binanza.trade(symbol_pairs)
+
 	except:
 		print(traceback.format_exc())
 

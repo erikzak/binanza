@@ -123,6 +123,7 @@ class Binanza(object):
         self.api_secret = api_secret
         for key, item in kwargs.items():
             setattr(self, key, item)
+
         # Set default values
         if not (hasattr(self, "trade_batch")):
             self.trade_batch = 0.05
@@ -136,6 +137,7 @@ class Binanza(object):
             self.sleep_duration = 300
         if not (hasattr(self, "gmail")):
             self.gmail = None
+
         # Candlestick pattern functions
         self.patterns_bull = {
             "Abandoned baby": CDLABANDONEDBABY,
@@ -235,10 +237,14 @@ class Binanza(object):
         """
         bullish = False
         bearish = False
+
+        # Positive/negative indicators
         if (any(analyses[pattern][-1] != 0.0 for pattern in self.patterns_bull)):
             bullish = True
         if (any(analyses[pattern][-1] != 0.0 for pattern in self.patterns_bear)):
             bearish = True
+
+        # Neutral patterns
         if (bullish is False and any(analyses[pattern][-1] >= 50 for pattern in self.patterns_neutral)):
             bullish = True
         if (bearish is False and any(analyses[pattern][-1] <= -50 for pattern in self.patterns_neutral)):
@@ -267,14 +273,19 @@ class Binanza(object):
         side (str) -- the type of order to check, "BUY" or "SELL"
         """
         orders = self.client.get_all_orders(symbol=symbol)
+
+        # Calculate average
         order_sum = 0.0
         n_orders = 0.0
         for order in orders:
             if (order["side"] == side and order["status"] in ["PARTIALLY_FILLED", "FILLED"]):
                 order_sum += float(order["price"]) * float(order["executedQty"])
                 n_orders += float(order["executedQty"])
+
+        # Don't make assumptions when few historical orders
         if (n_orders < 5):
             return None
+
         return order_sum / n_orders
 
     def buy_price_is_right(self, symbol, price):
