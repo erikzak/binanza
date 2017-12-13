@@ -336,12 +336,13 @@ class Binanza(object):
             # Run function
             run = True
             while (run):
+                # Get logger
                 log = logging.getLogger(log_name)
-                log.info("---------------------------------------")
 
                 # Client
                 self.client = Client(self.api_key, self.api_secret)
                 for symbol_pair in symbol_pairs:
+                    log.info("---------------------------------------")
                     # Settings
                     buy_symbol = symbol_pair["buy"]
                     base_symbol = symbol_pair["base"]
@@ -359,12 +360,9 @@ class Binanza(object):
                     analyses = results["analyses"]
 
                     # Debug
-                    log.debug("\nLAST 5 CANDLESTICK INPUTS:")
-                    log.debug("Open: {}".format(inputs["open"][-5:]))
-                    log.debug("High: {}".format(inputs["high"][-5:]))
-                    log.debug("Low: {}".format(inputs["low"][-5:]))
-                    log.debug("Close: {}".format(inputs["close"][-5:]))
-                    log.debug("Volume: {}".format(inputs["volume"][-5:]))
+                    log.debug("  LAST 5 CANDLESTICK INPUTS:")
+                    for param in ["open", "high", "low", "close", "volume"]:
+                        log.debug("    {}: {}".format(param, inputs[param][-5:]))
                     log.debug("  LAST 5 CANDLESTICK ANALYSES:")
                     for anal in sorted(analyses.keys()):
                         log.debug("    {}: {}".format(anal, analyses[anal][-5:]))
