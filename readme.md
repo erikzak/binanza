@@ -1,0 +1,28 @@
+Binanza
+=======
+
+My first Python3 script for automating cryptocurrency trading using the Binance API.
+
+Analyzes candlestick patterns and tries to buy low and sell high.
+
+Disclaimer
+----------
+
+Do not use this if you want to make money. I have no idea what I am doing.
+
+![Cryptomonkey](https://imgur.com/4A2NNQs "Cryptomonkey")
+
+Usage
+-----
+
+See main() in start_trading.py for example usage.
+
+Requires a Binance account and API access, go to account settings to enable then replace example API key and secret.
+
+Run in console or as a service.
+
+Dependencies
+------------
+
+* [TA-Lib](https://github.com/mrjbq7/ta-lib)
+* [python-binance](https://github.com/sammchardy/python-binance)
