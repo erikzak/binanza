@@ -26,13 +26,14 @@ def main():
 			key,
 			secret,
 			# Fraction of either buy or base symbol balance to trade each interval (if favorable pattern), defaults to 0.05
+			# Note that any order below the Binance API limit of 0.001 BTC will be adjusted up to this limit
 			trade_batch = 0.05,
 			# Kline (candlestick) interval as binance enum (analysis = interval * 500), defaults to 5 minute intervals
 			# Legal values: '1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M'
 			kline_interval = "5m",
 			# Minimum symbol balances to keep in funds, defaults to 0 for all
 			min_balance = {
-				"ETH": 0.1,
+				"ETH": 0.05,
 				"IOTA": 120,
 				"XRP": 50
 			},

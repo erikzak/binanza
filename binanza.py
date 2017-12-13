@@ -97,8 +97,9 @@ class Binanza(object):
         api_key (str) -- your Binance API key
         api_secret (str) -- your Binance API secret
         {trade_batch} (float) -- a raction of either buy or base symbol
-            balance to trade each interval if a favorable pattern
-            is detected. Defaults to 5%
+            balance to trade each interval if a favorable pattern is detected.
+            Note that any order below the Binance API limit of 0.001 BTC will
+            be adjusted up to this limit. Defaults to 0.05 (= 5%)
         {min_balance} (dict) -- a dict of symbols and minimum balances as
             key-value pairs used to determine if an trade should go through.
             If no minimum balance is defined for a symbol the trader will
@@ -141,17 +142,17 @@ class Binanza(object):
         # Candlestick pattern functions
         self.patterns_bull = {
             "Abandoned baby": CDLABANDONEDBABY,
-            "Shooting star": CDLSHOOTINGSTAR,
             "Morning star": CDLMORNINGSTAR,
             "Three line strike": CDL3LINESTRIKE,
             "Three advancing white soldiers": CDL3WHITESOLDIERS,
             "Morning Doji Star": CDLMORNINGDOJISTAR
         }
         self.patterns_bear = {
+            "Evening Doji Star": CDLEVENINGDOJISTAR,
             "Evening star": CDLEVENINGSTAR,
+            "Shooting star": CDLSHOOTINGSTAR,
             "Two crows": CDL2CROWS,
-            "Three Black Crows": CDL3BLACKCROWS,
-            "Evening Doji Star": CDLEVENINGDOJISTAR
+            "Three Black Crows": CDL3BLACKCROWS
         }
         self.patterns_neutral = {
             #"Marubozu": CDLMARUBOZU
@@ -169,13 +170,13 @@ class Binanza(object):
         Keyword arguments:
         symbols (list) -- the list of Binance symbols for which to get balances
         """
-        balances = {}
+        self.balances = {}
         account = self.client.get_account()
         for balance in account["balances"]:
             for symbol in symbols:
                 if (balance["asset"] == symbol):
-                    balances[symbol] = float(balance["free"])
-        return balances
+                    self.balances[symbol] = float(balance["free"])
+        return
 
     def analyze_candles(self, candles):
         """Uses TA-Lib to analyze candlesticks, and returns a result dict with
@@ -189,12 +190,12 @@ class Binanza(object):
         # Candlestick list format:
         # [open time, open, high, low, close, volume, close time, quote asset volume, number of trades, taker buy base asset volume, taker buy quote asset volume]
 
-        # Skip last candle if volume less than 10% of previous candle
+        # Skip last candle if volume less than 20% of previous candle
         # (indicates partial candlestick at start of Binance bin cutoff)
         if (len(candles) > 1):
             current_volume = float(candles[-1][5])
             previous_volume = float(candles[-2][5])
-            if (current_volume < previous_volume * 0.1):
+            if (current_volume < previous_volume * 0.2):
                 del candles[-1]
 
         # Extract candlestick values to convert to numpy arrays
@@ -238,29 +239,44 @@ class Binanza(object):
         """
         bullish = False
         bearish = False
+        patterns = []
 
         # Positive/negative indicators
-        if (any(analyses[pattern][-1] != 0.0 for pattern in self.patterns_bull)):
-            bullish = True
-        if (any(analyses[pattern][-1] != 0.0 for pattern in self.patterns_bear)):
-            bearish = True
+        for pattern in self.patterns_bull:
+            if (analyses[pattern][-1] != 0.0):
+                bullish = True
+                patterns.append("{} [{}]".format(pattern, analyses[pattern][-1]))
+        for pattern in self.patterns_bear:
+            if (analyses[pattern][-1] != 0.0):
+                bearish = True
+                patterns.append("{} [{}]".format(pattern, analyses[pattern][-1]))
 
         # Neutral patterns
-        if (bullish is False and any(analyses[pattern][-1] >= 50 for pattern in self.patterns_neutral)):
-            bullish = True
-        if (bearish is False and any(analyses[pattern][-1] <= -50 for pattern in self.patterns_neutral)):
-            bearish = True
-        return bullish, bearish
+        for pattern in self.patterns_neutral:
+            if (bullish is False and analyses[pattern][-1] > 0.0):
+                bullish = True
+                patterns.append("{} [{}]".format(pattern, analyses[pattern][-1]))
+            if (bearish is False and analyses[pattern][-1] < 0.0):
+                bearish = True
+                patterns.append("{} [{}]".format(pattern, analyses[pattern][-1]))
 
-    def balance_is_ok(self, symbol, balances):
+        return bullish, bearish, patterns
+
+    def balance_is_ok(self, symbol, quantity):
         """Checks if a minimum balance is defined for a symbol and if the
         balance is over the limit.
 
         symbol (str) -- the currency symbol as defined by Binance
-        balances (dict) -- the dict containing symbols and associated balances
-            as key-value pairs
+        quantity (float) -- the order quantity
         """
-        if (symbol not in balances or (symbol in self.min_balance and balances[symbol] < self.min_balance[symbol])):
+        if (
+            symbol not in self.balances or
+            quantity > self.balances[symbol] or
+            (
+                symbol in self.min_balance and 
+                self.balances[symbol] < self.min_balance[symbol]
+            )            
+        ):
             return False
         return True
 
@@ -325,6 +341,20 @@ class Binanza(object):
             return False
         return True
 
+    def get_proper_quantity(self, symbol):
+        """Returns a proper order quantity based on desired balance fraction
+        and API limits.
+
+        Keyword arguments:
+        symbol (str) -- the currency to trade
+        """
+        quantity = self.balances[symbol] * self.trade_batch
+        btc_value = float(self.client.get_ticker(symbol="{}BTC".format(symbol))["lastPrice"])
+        while (quantity * btc_value < 0.001):
+            quantity = quantity * 1.1
+        btc_eqv = quantity * btc_value
+        return quantity, btc_eqv
+
     def trade(self, symbol_pairs):
         """Initiates the trader using a list of buy and base symbol pairs,
         where the candlestick patterns of the buy symbol are analyzed for
@@ -338,13 +368,14 @@ class Binanza(object):
             symbols. Each symbol pair will be analyzed in order each run.
             Example: [{"buy": "IOTA", "base": "ETH"}]
         """
-        try:
-            # Log
-            log_name = "binanza"
-            logger = Log(log_name)
-            # Run function
-            run = True
-            while (run):
+        # Log
+        log_name = "binanza"
+        logger = Log(log_name)
+
+        # Run function
+        run = True
+        while (run):
+            try:
                 # Get logger
                 log = logging.getLogger(log_name)
 
@@ -360,7 +391,7 @@ class Binanza(object):
                     log.info("Inspecting {}/{}".format(buy_symbol, base_symbol))
 
                     # Get balances
-                    balances = self.get_balances([buy_symbol, base_symbol])
+                    self.get_balances([buy_symbol, base_symbol])
                     
                     # Analyze trend
                     candles = self.client.get_klines(symbol=symbol, interval=self.kline_interval)
@@ -375,38 +406,54 @@ class Binanza(object):
                     log.debug("  LAST 5 CANDLESTICK ANALYSES:")
                     for anal in sorted(analyses.keys()):
                         log.debug("    {}: {}".format(anal, analyses[anal][-5:]))
+                    # Example buy order
+                    #price = float(inputs["close"][-1])
+                    #quantity, btc_eqv = self.get_proper_quantity(buy_symbol)
+                    #log.info("EXAMPLE SELL ORDER: {} {} at {} {} ({} {} total, {} BTC)".format(quantity, buy_symbol, price, base_symbol, quantity * price, base_symbol, btc_eqv))
 
                     # Determine buy/sell
-                    bullish, bearish = self.check_results(analyses)
+                    bullish, bearish, recognized_patterns = self.check_results(analyses)
                     if not (bullish or bearish):
                         log.info("  No pattern found")
                     else:
-                        log.info("Balances:")
-                        for b in balances:
-                            log.info("  {}: {}".format(b, balances[b]))
                         price = float(inputs["close"][-1])
+
+                        # Print recognized patterns and available balances
+                        log.info("Patterns found: {}".format(", ".join(recognized_patterns)))
+                        log.info("Balances:")
+                        for b in self.balances:
+                            log.info("  {}: {}".format(b, self.balances[b]))
+                        
                         if (bullish):
                             # BUY if balance, price and quantity is OK
-                            quantity = balances[base_symbol] * self.trade_batch / price
-                            base_total = quantity * price
-                            log.info("BUY ORDER: {} {} at {} {} ({} {} total)".format(quantity, buy_symbol, price, base_symbol, base_total, base_symbol))
-                            if not (self.balance_is_ok(base_symbol, balances)):
+                            base_quantity, btc_eqv = self.get_proper_quantity(base_symbol)
+                            quantity = base_quantity / price
+                            log.info("BUY ORDER: {} {} at {} {} ({} {} total, {} BTC)".format(quantity, buy_symbol, price, base_symbol, quantity * price, base_symbol, btc_eqv))
+                            if not (self.balance_is_ok(base_symbol, quantity)):
                                 log.warning("  NO BUY: Minimum {} balance limit reached.".format(base_symbol))
                             elif not (self.buy_price_is_right(symbol, price)):
-                                log.info("  NO BUY: Held off buy due to high price compared to recent sell orders")
+                                log.warning("  NO BUY: Held off buy due to high price compared to recent sell orders")
                             else:
-                                self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
+                                try:
+                                    self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
+                                except BinanceAPIException as e:
+                                    log.error(e.status_code)
+                                    log.error(e.message)
 
                         elif (bearish):
                             # SELL if balance, price and quantity is OK
-                            quantity = balances[buy_symbol] * self.trade_batch
-                            log.info("SELL ORDER: {} {} at {} {} ({} {} total)".format(quantity, buy_symbol, price, base_symbol, quantity * price, base_symbol))
-                            if not (self.balance_is_ok(buy_symbol, balances)):
+                            quantity, btc_eqv = self.get_proper_quantity(buy_symbol)
+                            log.info("SELL ORDER: {} {} at {} {} ({} {} total, {} BTC)".format(quantity, buy_symbol, price, base_symbol, quantity * price, base_symbol, btc_eqv))
+                            if not (self.balance_is_ok(buy_symbol, quantity)):
                                 log.warning("  NO SELL: Minimum {} balance limit reached".format(buy_symbol))
                             elif not (self.sell_price_is_right(symbol, price)):
-                                log.info("  NO SELL: Held off sell due to low price compared to recent buy orders")
+                                log.warning("  NO SELL: Held off sell due to low price compared to recent buy orders")
                             else:
-                                self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
+                                try:
+                                    self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
+                                except BinanceAPIException as e:
+                                    log.error(e.status_code)
+                                    log.error(e.message)
 
                         # Log recognized patterns
                         for pattern_list in self.patterns:
@@ -420,20 +467,22 @@ class Binanza(object):
 
                 # Shutdown logging to avoid handler chaos
                 logging.shutdown()
+
+            except:
+                # Print/log errors
+                print(traceback.format_exc())
+                log.exception("Script error")
+                # Optionally send last run log by mail
+                if (logger.has_errors() and self.gmail is not None):
+                    # Send one mail per day (or individual script process) to avoid spam
+                    today = datetime.datetime.now().strftime("%Y.%m.%d")
+                    if (logger.last_error_sent is None or logger.last_error_sent != today):
+                        logger.send_gmail(self.gmail["username"], self.gmail["password"], self.gmail["errors_to"], subject="Binanza error")
+                        logger.last_error_sent = today
+
+            finally:
                 # Continuous running or break
                 if (self.continuous):
                     time.sleep(self.sleep_duration)
                 else:
                     run = False
-
-        except:
-            # Print/log errors
-            print(traceback.format_exc())
-            log.exception("Script error")
-            # Optionally send last run log by mail
-            if (logger.has_errors() and self.gmail is not None):
-                # Send one mail per day (or individual script process) to avoid spam
-                today = datetime.datetime.now().strftime("%Y.%m.%d")
-                if (logger.last_error_sent is None or logger.last_error_sent != today):
-                    logger.send_gmail(self.gmail["username"], self.gmail["password"], self.gmail["errors_to"], subject="Binanza error")
-                    logger.last_error_sent = today
