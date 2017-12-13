@@ -21,6 +21,8 @@ Requires a Binance account and API access, go to account settings to enable then
 
 Run in console or as a service.
 
+If you are getting an API error code=-1013 (Filter failure: MIN_NOTIONAL) it means that your orders are too small (less than 0.001 BTC).
+
 Dependencies
 ------------
 
