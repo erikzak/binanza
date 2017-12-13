@@ -10,7 +10,7 @@ Disclaimer
 
 Do not use this if you want to make money. I have no idea what I am doing.
 
-![Cryptomonkey](https://i.imgur.com/4A2NNQs.gif "Cryptomonkey")
+![Cryptomonkey](https://i.imgur.com/4A2NNQs.gif)
 
 Usage
 -----
