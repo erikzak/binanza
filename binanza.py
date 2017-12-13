@@ -141,6 +141,7 @@ class Binanza(object):
         # Candlestick pattern functions
         self.patterns_bull = {
             "Abandoned baby": CDLABANDONEDBABY,
+            "Hammer": CDLHAMMER,
             "Shooting star": CDLSHOOTINGSTAR,
             "Morning star": CDLMORNINGSTAR,
             "Three line strike": CDL3LINESTRIKE,
@@ -149,6 +150,7 @@ class Binanza(object):
         }
         self.patterns_bear = {
             "Evening star": CDLEVENINGSTAR,
+            "Hanging man": CDLHANGINGMAN,
             "Two crows": CDL2CROWS,
             "Three Black Crows": CDL3BLACKCROWS,
             "Evening Doji Star": CDLEVENINGDOJISTAR
@@ -348,7 +350,7 @@ class Binanza(object):
                     base_symbol = symbol_pair["base"]
                     symbol = "{}{}".format(buy_symbol, base_symbol)
 
-                    log.info("Inspecting {}/{} patterns".format(buy_symbol, base_symbol))
+                    log.info("Inspecting {}/{}".format(buy_symbol, base_symbol))
 
                     # Get balances
                     balances = self.get_balances([buy_symbol, base_symbol])
