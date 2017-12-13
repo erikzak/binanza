@@ -10,12 +10,12 @@ Disclaimer
 
 Do not use this if you want to make money. I have no idea what I am doing.
 
-<img src=https://i.imgur.com/l3v4P3s.jpg alt="Dog" title="Dog" width="200" />
+![Cryptomonkey](https://imgur.com/4A2NNQs "Cryptomonkey")
 
 Usage
 -----
 
-See main() in start_iota_trading.py for example usage.
+See main() in start_trading.py for example usage.
 
 Requires a Binance account and API access, go to account settings to enable then replace example API key and secret.
 
