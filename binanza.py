@@ -141,7 +141,6 @@ class Binanza(object):
         # Candlestick pattern functions
         self.patterns_bull = {
             "Abandoned baby": CDLABANDONEDBABY,
-            "Hammer": CDLHAMMER,
             "Shooting star": CDLSHOOTINGSTAR,
             "Morning star": CDLMORNINGSTAR,
             "Three line strike": CDL3LINESTRIKE,
@@ -150,13 +149,13 @@ class Binanza(object):
         }
         self.patterns_bear = {
             "Evening star": CDLEVENINGSTAR,
-            "Hanging man": CDLHANGINGMAN,
             "Two crows": CDL2CROWS,
             "Three Black Crows": CDL3BLACKCROWS,
             "Evening Doji Star": CDLEVENINGDOJISTAR
         }
         self.patterns_neutral = {
             #"Marubozu": CDLMARUBOZU
+            "Hammer": CDLHAMMER,
         }
         self.patterns = [self.patterns_bull, self.patterns_bear, self.patterns_neutral]
         return
@@ -265,10 +264,14 @@ class Binanza(object):
             return False
         return True
 
+    def seconds_to_days(self, seconds):
+        """Converts seconds to days."""
+        return seconds / 60.0 / 60.0 / 24.0
+
     def get_order_average(self, symbol, side):
-        """Gets all orders of the Binance account (500 max),
-        extracts successfull sell or buy orders and calculates
-        an average price per quantity.
+        """Gets all orders of the Binance account (500 max) from the last week,
+        extracts successfull sell or buy orders and calculates an average price
+        per quantity.
 
         Keyword arguments:
         symbol (str) -- the Binance symbol to fetch orders for
@@ -279,8 +282,12 @@ class Binanza(object):
         # Calculate average
         order_sum = 0.0
         n_orders = 0.0
+        now = datetime.datetime.now()
         for order in orders:
-            if (order["side"] == side and order["status"] in ["PARTIALLY_FILLED", "FILLED"]):
+            then = datetime.datetime.fromtimestamp(float(order["time"]) / 1000.0)
+            delta = now - then
+            age_days = self.seconds_to_days(delta.total_seconds())
+            if (age_days < 7 and order["side"] == side and order["status"] in ["PARTIALLY_FILLED", "FILLED"]):
                 order_sum += float(order["price"]) * float(order["executedQty"])
                 n_orders += float(order["executedQty"])
 
@@ -372,37 +379,33 @@ class Binanza(object):
                     # Determine buy/sell
                     bullish, bearish = self.check_results(analyses)
                     if not (bullish or bearish):
-                        log.info("  No pattern found".format(symbol))
+                        log.info("  No pattern found")
                     else:
                         log.info("Balances:")
                         for b in balances:
                             log.info("  {}: {}".format(b, balances[b]))
                         price = float(inputs["close"][-1])
-
                         if (bullish):
-                            # BUY if balance OK
+                            # BUY if balance, price and quantity is OK
+                            quantity = balances[base_symbol] * self.trade_batch / price
+                            base_total = quantity * price
+                            log.info("BUY ORDER: {} {} at {} {} ({} {} total)".format(quantity, buy_symbol, price, base_symbol, base_total, base_symbol))
                             if not (self.balance_is_ok(base_symbol, balances)):
-                                log.warning("{} - NO BUY: Lower {} limit reached.".format(symbol, base_symbol))
+                                log.warning("  NO BUY: Minimum {} balance limit reached.".format(base_symbol))
                             elif not (self.buy_price_is_right(symbol, price)):
-                                log.info("{} - NO BUY: Held off buy due to high price compared to recent sell orders".format(symbol))
+                                log.info("  NO BUY: Held off buy due to high price compared to recent sell orders")
                             else:
-                                quantity = int(balances[base_symbol] * self.trade_batch / price)
-                                if (quantity == 0):
-                                    quantity = 1
-                                log.info("{} - BUY ORDER: {} {} at {} {} ({} {} total)".format(symbol, quantity, buy_symbol, price, base_symbol, quantity * price, base_symbol))
                                 self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
 
                         elif (bearish):
-                            # SELL if balance and price OK
+                            # SELL if balance, price and quantity is OK
+                            quantity = balances[buy_symbol] * self.trade_batch
+                            log.info("SELL ORDER: {} {} at {} {} ({} {} total)".format(quantity, buy_symbol, price, base_symbol, quantity * price, base_symbol))
                             if not (self.balance_is_ok(buy_symbol, balances)):
-                                log.warning("{} - NO SELL: Lower {} limit reached".format(symbol, buy_symbol))
+                                log.warning("  NO SELL: Minimum {} balance limit reached".format(buy_symbol))
                             elif not (self.sell_price_is_right(symbol, price)):
-                                log.info("{} - NO SELL: Held off sell due to low price compared to recent buy orders".format(symbol))
+                                log.info("  NO SELL: Held off sell due to low price compared to recent buy orders")
                             else:
-                                quantity = int(balances[buy_symbol] * self.trade_batch)
-                                if (quantity == 0):
-                                    quantity = 1
-                                log.info("{} - SELL ORDER: {} {} at {} {} ({} {} total)".format(symbol, quantity, buy_symbol, price, base_symbol, quantity * price, base_symbol))
                                 self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
 
                         # Log recognized patterns
