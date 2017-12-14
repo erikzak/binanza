@@ -25,7 +25,7 @@ def main():
 		binanza = Binanza(
 			key,
 			secret,
-			# Fraction of either buy or base symbol balance to trade each interval (if favorable pattern), defaults to 0.05
+			# Fraction of either buy or base symbol balance to trade each interval (if favorable pattern), defaults to 0.05 (= 5%)
 			# Note that any order below the Binance API limit of 0.001 BTC will be adjusted up to this limit
 			trade_batch = 0.05,
 			# Kline (candlestick) interval as binance enum (analysis = interval * 500), defaults to 5 minute intervals
@@ -33,7 +33,7 @@ def main():
 			kline_interval = "5m",
 			# Minimum symbol balances to keep in funds, defaults to 0 for all
 			min_balance = {
-				"ETH": 0.05,
+				"ETH": 0.2,
 				"IOTA": 120,
 				"XRP": 50
 			},
