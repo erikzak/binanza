@@ -25,7 +25,7 @@ def main():
 		binanza = Binanza(
 			key,
 			secret,
-			# Fraction of either buy or base symbol balance to trade each interval (if favorable pattern), defaults to 0.05 (= 5%)
+			# Fraction of either base or quote symbol balance to trade each interval (if favorable pattern), defaults to 0.05 (= 5%)
 			# Note that any order below the Binance API limit of 0.001 BTC will be adjusted up to this limit
 			trade_batch = 0.05,
 			# Kline (candlestick) interval as binance enum (analysis = interval * 500), defaults to 5 minute intervals
@@ -51,17 +51,17 @@ def main():
 		)
 
 		# Specify which symbol pairs to trade, where the candlestick patterns
-		# of the buy symbol are analyzed for favorable buy/sell situations and
-		# the base symbol is used as the order currency.
+		# of the base symbol are analyzed for favorable buy/sell situations and
+		# the quote symbol is used as the order currency.
 		# Symbol pairs must exist on Binance as valid order options.
 		symbol_pairs = [{
-			# Tries to favorably trade IOTA using ETH as base currency
-			"buy": "IOTA",
-			"base": "ETH"
+			# Tries to favorably trade base IOTA using ETH as quote currency
+			"base": "IOTA",
+			"quote": "ETH"
 		}, {
-			# Tries to favorably trade XRP using ETH as base currency
-			"buy": "XRP",
-			"base": "ETH"
+			# Tries to favorably trade base XRP using ETH as quote currency
+			"base": "XRP",
+			"quote": "ETH"
 		}]
 
 		# Start trading
