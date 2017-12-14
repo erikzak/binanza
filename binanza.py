@@ -379,10 +379,10 @@ class Binanza(object):
         symbol (str) -- the buy order symbol to check
         price (Decimal) -- the market price per quantity 
         """
-        #avg = self.get_order_average(symbol, "SELL")
-        #if (avg is not None and price > avg):
-        #    # Buy price higher than average sell order
-        #    return False
+        avg = self.get_order_average(symbol, "SELL")
+        if (avg is not None and price > avg * Decimal(1.5)):
+            # Buy price much higher than average sell order
+            return False
         return True
 
     def sell_price_is_right(self, symbol, price):
