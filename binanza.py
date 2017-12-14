@@ -27,7 +27,7 @@ class Log(object):
     level -- the logging level enum to use, set to logging.DEBUG to log last
         five pattern analysis inputs and method results
     """
-    def __init__(self, log_name="binanza", level=logging.DEBUG):
+    def __init__(self, log_name="binanza", level=logging.INFO):
         logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s -- %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
         self.log = logging.getLogger(log_name)
         # Configure
