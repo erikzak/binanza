@@ -356,7 +356,8 @@ class Binanza(object):
 
         # Calculate average
         order_sum = Decimal(0.0)
-        n_orders = Decimal(0.0)
+        quantity = Decimal(0.0)
+        n_orders = 0
         now = datetime.datetime.now()
         for order in orders:
             then = datetime.datetime.fromtimestamp(Decimal(order["time"]) / Decimal(1000.0))
@@ -364,14 +365,15 @@ class Binanza(object):
             age_days = self.seconds_to_days(delta.total_seconds())
             if (age_days < 14 and order["side"] == side and order["status"] in ["PARTIALLY_FILLED", "FILLED"]):
                 order_sum += Decimal(order["price"]) * Decimal(order["executedQty"])
-                n_orders += Decimal(order["executedQty"])
+                quantity += Decimal(order["executedQty"])
+                n_orders += 1
 
         # Don't make assumptions when few historical orders
         if (n_orders < 5):
             return None
 
         # Return average (including fee)
-        avg_price = order_sum / n_orders
+        avg_price = order_sum / quantity
         avg_price = avg_price * Decimal(1.05)
         return avg_price
 
@@ -383,8 +385,8 @@ class Binanza(object):
         symbol (str) -- the buy order symbol to check
         price (Decimal) -- the market price per quantity 
         """
-        avg = self.get_order_average(symbol, "SELL")
-        if (avg is not None and price > avg * Decimal(1.5)):
+        avg_sell_price = self.get_order_average(symbol, "SELL")
+        if (avg is not None and price > avg_sell_price * Decimal(1.5)):
             # Buy price much higher than average sell order
             return False
         return True
@@ -397,8 +399,8 @@ class Binanza(object):
         symbol (str) -- the sell order symbol to check
         price (Decimal) -- the market price per quantity 
         """
-        avg = self.get_order_average(symbol, "BUY")
-        if (avg is not None and price < avg):
+        avg_buy_price = self.get_order_average(symbol, "BUY")
+        if (avg is not None and price < avg_buy_price):
             # Sell price lower than average buy order
             return False
         return True
@@ -496,13 +498,12 @@ class Binanza(object):
                 # Client
                 self.client = Client(self.api_key, self.api_secret)
                 for symbol_pair in symbol_pairs:
-                    log.info("---------------------------------------")
                     # Settings
                     base_symbol = symbol_pair["base"]
                     quote_symbol = symbol_pair["quote"]
                     symbol = "{}{}".format(base_symbol, quote_symbol)
 
-                    log.info("Inspecting {}/{}".format(base_symbol, quote_symbol))
+                    log.info("<b>{}/{}</b>".format(base_symbol, quote_symbol))
 
                     # Get balances and exchange info
                     self.get_balances([base_symbol, quote_symbol])
@@ -521,8 +522,9 @@ class Binanza(object):
                     #for param in ["open", "high", "low", "close", "volume"]:
                     #    log.debug("    {}: {}".format(param, inputs[param][-5:]))
                     log.debug("  LAST 5 CANDLESTICK ANALYSES:")
-                    for anal in sorted(analyses.keys()):
-                        log.debug("    {}: {}".format(anal, analyses[anal][-5:]))
+                    anals = sorted(analyses.keys())
+                    for i in range(0, len(anals), 2):
+                        log.debug("    {}: {}, {}: {}".format(anals[i], analyses[anals[i]][-5:], anals[i+1], analyses[anals[i+1]][-5:]))
                     # EXAMPLE BUY
                     #self.set_decimal_precision(symbol, quote_symbol)
                     #price = Decimal(inputs["close"][-1])
@@ -540,7 +542,7 @@ class Binanza(object):
 
                     # Determine buy/sell
                     if (indication == 0.0):
-                        log.info("  No pattern found")
+                        log.info("  No patterns")
                     else:
                         # Set Decimal to quote symbol
                         self.set_decimal_precision(symbol, quote_symbol)
@@ -548,7 +550,7 @@ class Binanza(object):
 
                         # Print recognized patterns and available balances
                         log.info("Average indication value: {}".format(round(indication, 2)))
-                        log.info("Pattern(s) found: {}".format(", ".join(recognized_patterns)))
+                        log.info("Pattern(s): {}".format(", ".join(recognized_patterns)))
                         log.info("Balances:")
                         for b in self.balances:
                             log.info("  {}: {}".format(b, self.balances[b]))
