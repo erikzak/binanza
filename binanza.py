@@ -49,6 +49,16 @@ class Log(object):
         self.last_error_sent = None
         return
 
+    def has_order(self):
+        """Checks if the last run log included orders."""
+        log_file = self.last_run_log
+        f = open(log_file)
+        log = f.read()
+        f.close()
+        if ("BUY ORDER:" in log or "SELL ORDER:" in log):
+            return True
+        return False
+
     def has_errors(self):
         """Checks if the log file for the last run encountered any errors."""
         log_file = self.last_run_log
@@ -532,13 +542,13 @@ class Binanza(object):
                     #quantity, price = self.check_order(symbol, base_quantity / price, price)
                     #if (quantity is None or price is None):
                     #    log.debug("  No buy, symbol closed for trading")
-                    #log.debug("EXAMPLE BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
+                    #log.debug("BUY EXAMPLE ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
                     # EXAMPLE SELL
                     #quantity = self.balances[base_symbol] * self.trade_batch
                     #quantity, price = self.check_order(symbol, quantity, price)
                     #if (quantity is None or price is None):
                     #    log.debug("  No sell, symbol closed for trading")
-                    #log.debug("EXAMPLE SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
+                    #log.debug("SELL EXAMPLE ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
 
                     # Determine buy/sell
                     if (indication == 0.0):
@@ -592,9 +602,9 @@ class Binanza(object):
                                     log.error(e.status_code)
                                     log.error(e.message)
 
-                        # Optionally send orders by mail
-                        if (self.gmail is not None):
-                            logger.send_gmail(self.gmail["username"], self.gmail["password"], self.gmail["orders_to"], subject="Binanza order")
+                # Optionally send orders by mail
+                if (logger.has_order() and self.gmail is not None):
+                    logger.send_gmail(self.gmail["username"], self.gmail["password"], self.gmail["orders_to"], subject="Binanza order")
 
                 # Shutdown logging to avoid handler chaos
                 logging.shutdown()
