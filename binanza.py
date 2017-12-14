@@ -472,9 +472,7 @@ class Binanza(object):
                             if (quantity is None or price is None):
                                 log.info("  No buy, symbol closed for trading")
                             log.info("BUY ORDER: {} {} @ {} {} (total: {} {})".format(round(quantity, 6), buy_symbol, price, base_symbol, round(quantity * price, 6), base_symbol))
-                            if (quantity is None):
-                                log.warning("")
-                            elif not (self.balance_is_ok(base_symbol, base_quantity)):
+                            if not (self.balance_is_ok(base_symbol, base_quantity)):
                                 log.warning("  NO BUY: Minimum {} balance limit reached.".format(base_symbol))
                             elif not (self.buy_price_is_right(symbol, price)):
                                 log.warning("  NO BUY: Held off buy due to high price compared to recent sell orders")
