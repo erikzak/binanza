@@ -173,6 +173,10 @@ class Binanza(object):
                 "f": CDLABANDONEDBABY,
                 "validators": [reversal_if_trend]
             },
+            "Dark cloud cover": {
+                "f": CDLDARKCLOUDCOVER,
+                "validators": [reversal_if_previous_trend_skip1]
+            },
             "Dragonfly doji": {
                 "f": CDLDRAGONFLYDOJI,
                 "validators": [reversal_if_trend]
@@ -513,9 +517,9 @@ class Binanza(object):
                     recognized_patterns = results["patterns"]
 
                     # Debug
-                    log.debug("  LAST 5 CANDLESTICK INPUTS:")
-                    for param in ["open", "high", "low", "close", "volume"]:
-                        log.debug("    {}: {}".format(param, inputs[param][-5:]))
+                    #log.debug("  LAST 5 CANDLESTICK INPUTS:")
+                    #for param in ["open", "high", "low", "close", "volume"]:
+                    #    log.debug("    {}: {}".format(param, inputs[param][-5:]))
                     log.debug("  LAST 5 CANDLESTICK ANALYSES:")
                     for anal in sorted(analyses.keys()):
                         log.debug("    {}: {}".format(anal, analyses[anal][-5:]))
