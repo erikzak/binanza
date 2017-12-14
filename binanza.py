@@ -396,7 +396,7 @@ class Binanza(object):
         price (Decimal) -- the market price per quantity 
         """
         avg_sell_price = self.get_order_average(symbol, "SELL")
-        if (avg is not None and price > avg_sell_price * Decimal(1.5)):
+        if (avg_sell_price is not None and price > avg_sell_price * Decimal(1.5)):
             # Buy price much higher than average sell order
             return False
         return True
@@ -410,7 +410,7 @@ class Binanza(object):
         price (Decimal) -- the market price per quantity 
         """
         avg_buy_price = self.get_order_average(symbol, "BUY")
-        if (avg is not None and price < avg_buy_price):
+        if (avg_buy_price is not None and price < avg_buy_price):
             # Sell price lower than average buy order
             return False
         return True
