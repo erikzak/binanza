@@ -368,7 +368,7 @@ class Binanza(object):
 
         # Return average (including fee)
         avg_price = order_sum / n_orders
-        avg_price = avg_price * Decimal(0.05)
+        avg_price = avg_price * Decimal(1.05)
         return avg_price
 
     def buy_price_is_right(self, symbol, price):
