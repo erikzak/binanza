@@ -351,8 +351,8 @@ class Binanza(object):
         orders = self.client.get_all_orders(symbol=symbol)
 
         # Calculate average
-        order_sum = 0.0
-        n_orders = 0.0
+        order_sum = Decimal(0.0)
+        n_orders = Decimal(0.0)
         now = datetime.datetime.now()
         for order in orders:
             then = datetime.datetime.fromtimestamp(Decimal(order["time"]) / Decimal(1000.0))
@@ -368,7 +368,7 @@ class Binanza(object):
 
         # Return average (including fee)
         avg_price = order_sum / n_orders
-        avg_price = avg_price * 0.05
+        avg_price = avg_price * Decimal(0.05)
         return avg_price
 
     def buy_price_is_right(self, symbol, price):
