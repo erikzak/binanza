@@ -21,9 +21,12 @@ Requires a Binance account and API access, go to account settings to enable then
 
 Run in console or as a service.
 
+Has a node package that can be used to extract statistics from the database that is created, containing order history and recognized patterns.
+
 Dependencies
 ------------
 
 * numpy
+* sqlite3
 * [TA-Lib](https://github.com/mrjbq7/ta-lib)
 * [python-binance](https://github.com/sammchardy/python-binance)

@@ -3,10 +3,12 @@
 import datetime
 from decimal import *
 from email.mime.text import MIMEText
+import json
 import logging
 import os
 import numpy as np
 import smtplib
+import sqlite3
 import sys
 import time
 import traceback
@@ -24,15 +26,15 @@ class Log(object):
     Keyword arguments:
     log_name (str) -- the name to use for log files, will create <log_name>.log
         for cumulative log and <log_name>_last.log for last run log
-    level -- the logging level enum to use, set to logging.DEBUG to log last
-        five pattern analysis inputs and method results
+    level -- the logging level enum to use, set this to logging.DEBUG to log
+        last five pattern analysis inputs and method results
     """
     def __init__(self, log_name="binanza", level=logging.INFO):
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s -- %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s\t%(levelname)s\t- %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
         self.log = logging.getLogger(log_name)
         # Configure
         self.log.setLevel(level)
-        formatter = logging.Formatter('%(asctime)s %(levelname)s -- %(message)s', '%Y.%m.%d %H:%M:%S')
+        formatter = logging.Formatter('%(asctime)s\t%(levelname)s\t- %(message)s', '%Y.%m.%d %H:%M:%S')
         # Last run
         self.last_run_log = os.path.join(sys.path[0], '{}_last.log'.format(log_name))
         last_run = logging.FileHandler(self.last_run_log, mode='w')
@@ -108,9 +110,6 @@ class Binanza(object):
         Keyword arguments:
         api_key (str) -- your Binance API key
         api_secret (str) -- your Binance API secret
-        {trade_batch} (float) -- a fraction to use for calculating quantity to
-            to trade at each interval if a favorable pattern is detected.
-            Defaults to 0.05 (= 5%)
         {min_balance} (dict) -- a dict of symbols and minimum balances as
             key-value pairs used to determine if an trade should go through.
             If no minimum balance is defined for a symbol the trader will
@@ -122,6 +121,8 @@ class Binanza(object):
             Defaults to a single analysis (and trade if pattern found)
         {sleep_duration} (int) -- a number of seconds to sleep between runs if
             running in continuous mode
+        {config_file} (str) -- a path to a config file to re-read settings from
+            on continuous runs
         {gmail} (dict) -- a dict with gmail authorization info and either a
             list of addresses to send order reports to or a list of addresses
             for error logs. Format: {
@@ -137,10 +138,6 @@ class Binanza(object):
             setattr(self, key, item)
 
         # Set default values and convert supplied floats to Decimals
-        if not (hasattr(self, "trade_batch")):
-            self.trade_batch = Decimal(0.05)
-        else:
-            self.trade_batch = Decimal(self.trade_batch)
         if not (hasattr(self, "min_balance")):
             self.min_balance = {}
         else:
@@ -148,6 +145,10 @@ class Binanza(object):
                 self.min_balance[symbol] = Decimal(self.min_balance[symbol])
         if not (hasattr(self, "kline_interval")):
             self.kline_interval = KLINE_INTERVAL_5MINUTE
+        if not (hasattr(self, "enforce_price_check")):
+            self.enforce_price_check = True
+        if not (hasattr(self, "price_check_days")):
+            self.price_check_days = 14
         if not (hasattr(self, "continuous")):
             self.continuous = False
         if not (hasattr(self, "sleep_duration")):
@@ -254,6 +255,23 @@ class Binanza(object):
         }
         return
 
+    def read_config(self):
+            """Reads a configuration file and applies settings, so that the
+            user does not have to restart the binanza service on changes."""
+            if not (hasattr(self, "config_file")):
+                return
+            f = open(os.path.join(sys.path[0], "config.txt"))
+            contents = ""
+            for line in f:
+                # Remove comment lines
+                if not (line.strip().startswith("#")):
+                    contents += line
+            f.close()
+            config = json.loads(contents)
+            for param in config:
+                setattr(self, param, config[param])
+            return
+
     def get_balances(self, symbols):
         """ Queries the Binance API for all account balances, and compiles
         a dict of symbols and free balance as key-value pairs.
@@ -319,7 +337,10 @@ class Binanza(object):
             indication = analyses[pattern][-1]
             if (indication != 0.0 and (validators is None or all(v(indication, candles) for v in validators))):
                 sum_indication += indication
-                recognized_patterns.append("{} [{}]".format(pattern, indication))
+                recognized_patterns.append({
+                    "name": pattern,
+                    "indication": indication
+                })
         avg_indication = sum_indication / len(self.patterns)
 
         # Return result object
@@ -373,21 +394,20 @@ class Binanza(object):
             then = datetime.datetime.fromtimestamp(Decimal(order["time"]) / Decimal(1000.0))
             delta = now - then
             age_days = self.seconds_to_days(delta.total_seconds())
-            if (age_days < 14 and order["side"] == side and order["status"] in ["PARTIALLY_FILLED", "FILLED"]):
+            if (age_days < self.price_check_days and order["side"] == side and order["status"] in ["PARTIALLY_FILLED", "FILLED"]):
                 order_sum += Decimal(order["price"]) * Decimal(order["executedQty"])
                 quantity += Decimal(order["executedQty"])
                 n_orders += 1
 
-        # Don't make assumptions when few historical orders
-        if (n_orders < 5):
+        if (n_orders == 0 or quantity == 0.0):
             return None
 
         # Return average (including fee)
         avg_price = order_sum / quantity
-        avg_price = avg_price * Decimal(1.05)
+        avg_price = avg_price * Decimal(1.0005)
         return avg_price
 
-    def buy_price_is_right(self, symbol, price):
+    def buy_price_is_right(self, symbol, price, inertia=1.0):
         """Checks if the price of a buy order is favorable by
         comparing it to the average of recent (last 500) sell orders.
         
@@ -396,21 +416,21 @@ class Binanza(object):
         price (Decimal) -- the market price per quantity 
         """
         avg_sell_price = self.get_order_average(symbol, "SELL")
-        if (avg_sell_price is not None and price > avg_sell_price * Decimal(1.5)):
-            # Buy price much higher than average sell order
+        if (avg_sell_price is not None and price * Decimal(inertia) > avg_sell_price):
+            # Buy price higher than average sell order
             return False
         return True
 
-    def sell_price_is_right(self, symbol, price):
+    def sell_price_is_right(self, symbol, price, inertia=1.0):
         """Checks if the price of a sell order is favorable by
         comparing it to the average of recent (last 500) buy orders.
         
         Keyword arguments:
         symbol (str) -- the sell order symbol to check
-        price (Decimal) -- the market price per quantity 
+        price (Decimal) -- the market price per quantity
         """
         avg_buy_price = self.get_order_average(symbol, "BUY")
-        if (avg_buy_price is not None and price < avg_buy_price):
+        if (avg_buy_price is not None and price * Decimal(inertia) < avg_buy_price):
             # Sell price lower than average buy order
             return False
         return True
@@ -441,43 +461,45 @@ class Binanza(object):
         a_quantity = None
         a_price = None
         for s in self.exchange_info["symbols"]:
-            if (s["symbol"] == symbol):
-                # Check if accepting trades
-                if (s["status"] != "TRADING"):
-                    return None, None
+            if (s["symbol"] != symbol):
+                continue
 
-                # Check filters
-                for f in s["filters"]:
+            # Check if accepting trades
+            if (s["status"] != "TRADING"):
+                return None, None
 
-                    # Check if price lower than price filter
-                    if (f["filterType"] == "PRICE_FILTER"):
-                        # Set Decimal context to quote symbol precision
-                        getcontext().prec = s["quotePrecision"]
-                        # Iterate price from min until desired price
-                        a_price = Decimal(f["minPrice"])
-                        price_tick = Decimal(f["tickSize"])
-                        while (a_price < price):
-                            a_price += price_tick
+            # Check filters
+            for f in s["filters"]:
 
-                    # Check if quantity lower than filters
-                    if (f["filterType"] == "LOT_SIZE"):
-                        # Set Decimal context to base symbol precision
-                        getcontext().prec = s["baseAssetPrecision"]
-                        # Iterate quantity from min until desired quantity
-                        min_qty = Decimal(f["minQty"])
-                        qty_step = Decimal(f["stepSize"])
-                        if (a_quantity is None):
-                            a_quantity = Decimal(min_qty)
-                        while (a_quantity < quantity):
-                            a_quantity += qty_step
+                # Check if price lower than price filter
+                if (f["filterType"] == "PRICE_FILTER"):
+                    # Set Decimal context to quote symbol precision
+                    getcontext().prec = s["quotePrecision"]
+                    # Iterate price from min until desired price
+                    a_price = Decimal(f["minPrice"])
+                    price_tick = Decimal(f["tickSize"])
+                    while (a_price < price):
+                        a_price += price_tick
 
-                    if (f["filterType"] == "MIN_NOTIONAL"):
-                        # Set Decimal context to base symbol precision
-                        getcontext().prec = s["baseAssetPrecision"]
-                        min_notional = Decimal(f["minNotional"])
-                        # Set quantity to min notional
-                        if (a_quantity is None or a_quantity < min_notional):
-                            a_quantity = min_notional
+                # Check if quantity lower than filters
+                if (f["filterType"] == "LOT_SIZE"):
+                    # Set Decimal context to base symbol precision
+                    getcontext().prec = s["baseAssetPrecision"]
+                    # Iterate quantity from min until desired quantity
+                    min_qty = Decimal(f["minQty"])
+                    qty_step = Decimal(f["stepSize"])
+                    if (a_quantity is None):
+                        a_quantity = Decimal(min_qty)
+                    while (a_quantity < quantity):
+                        a_quantity += qty_step
+
+                if (f["filterType"] == "MIN_NOTIONAL"):
+                    # Set Decimal context to base symbol precision
+                    getcontext().prec = s["baseAssetPrecision"]
+                    min_notional = Decimal(f["minNotional"])
+                    # Set quantity to min notional
+                    if (a_quantity is None or a_quantity < min_notional):
+                        a_quantity = min_notional
 
         return a_quantity, a_price
 
@@ -494,6 +516,7 @@ class Binanza(object):
             symbols. Each symbol pair will be analyzed in order each run.
             Example: [{"base": "IOTA", "quote": "ETH"}]
         """
+        self.symbol_pairs = symbol_pairs
         # Log
         log_name = "binanza"
         logger = Log(log_name)
@@ -505,13 +528,21 @@ class Binanza(object):
                 # Get logger
                 log = logging.getLogger(log_name)
 
+                # Re-read config
+                self.read_config()
+
+                # Init database
+                db = DB()
+
                 # Client
                 self.client = Client(self.api_key, self.api_secret)
-                for symbol_pair in symbol_pairs:
+                for symbol_pair in self.symbol_pairs:
                     # Settings
                     base_symbol = symbol_pair["base"]
                     quote_symbol = symbol_pair["quote"]
                     symbol = "{}{}".format(base_symbol, quote_symbol)
+                    buy_batch = Decimal(symbol_pair["buy_batch"])
+                    sell_batch = Decimal(symbol_pair["sell_batch"])
 
                     log.info("<b>{}/{}</b>".format(base_symbol, quote_symbol))
 
@@ -528,27 +559,18 @@ class Binanza(object):
                     recognized_patterns = results["patterns"]
 
                     # Debug
+                    log.debug("  Volumes: {}".format([int(v) for v in inputs["volume"][-5:]]))
                     #log.debug("  LAST 5 CANDLESTICK INPUTS:")
-                    #for param in ["open", "high", "low", "close", "volume"]:
+                    #for param in ["open", "high", "low", "close"]:
                     #    log.debug("    {}: {}".format(param, inputs[param][-5:]))
                     log.debug("  LAST 5 CANDLESTICK ANALYSES:")
-                    anals = sorted(analyses.keys())
-                    for i in range(0, len(anals), 2):
-                        log.debug("    {}: {}, {}: {}".format(anals[i], analyses[anals[i]][-5:], anals[i+1], analyses[anals[i+1]][-5:]))
-                    # EXAMPLE BUY
-                    #self.set_decimal_precision(symbol, quote_symbol)
-                    #price = Decimal(inputs["close"][-1])
-                    #base_quantity = self.balances[quote_symbol] * self.trade_batch
-                    #quantity, price = self.check_order(symbol, base_quantity / price, price)
-                    #if (quantity is None or price is None):
-                    #    log.debug("  No buy, symbol closed for trading")
-                    #log.debug("BUY EXAMPLE ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
-                    # EXAMPLE SELL
-                    #quantity = self.balances[base_symbol] * self.trade_batch
-                    #quantity, price = self.check_order(symbol, quantity, price)
-                    #if (quantity is None or price is None):
-                    #    log.debug("  No sell, symbol closed for trading")
-                    #log.debug("SELL EXAMPLE ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
+                    for anal in sorted(analyses.keys()):
+                        res = str(analyses[anal][-5:])
+                        while ("  " in res):
+                            res = res.replace("  ", " ")
+                        res = res.replace("[ ", "[")
+                        res = res.replace(" ]", "]")
+                        log.debug("    {:<31}: {:<20}".format(anal, res))
 
                     # Determine buy/sell
                     if (indication == 0.0):
@@ -558,27 +580,36 @@ class Binanza(object):
                         self.set_decimal_precision(symbol, quote_symbol)
                         price = Decimal(inputs["close"][-1])
 
-                        # Print recognized patterns and available balances
+                        # Print recognized patterns and available balances, and append to database
                         log.info("Average indication value: {}".format(round(indication, 2)))
-                        log.info("Pattern(s): {}".format(", ".join(recognized_patterns)))
+                        log.info("Pattern(s): {}".format(", ".join(["{} [{}]".format(p["name"], p["indication"]) for p in recognized_patterns])))
+                        pattern_rows = [[db.get_timestamp(), base_symbol, quote_symbol, p["name"], p["indication"], price] for p in recognized_patterns]
+                        db.insert_rows("patterns", pattern_rows)
                         log.info("Balances:")
                         for b in self.balances:
                             log.info("  {}: {}".format(b, self.balances[b]))
                         
                         if (indication > 0.0):
                             # BUY if balance, price and quantity is OK
-                            base_quantity = self.balances[quote_symbol] * self.trade_batch
+                            base_quantity = self.balances[quote_symbol] * buy_batch
                             quantity, price = self.check_order(symbol, base_quantity / price, price)
                             if (quantity is None or price is None):
-                                log.info("  No buy, symbol closed for trading")
-                            log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
+                                log.info("  NO BUY: Symbol closed for trading")
                             if not (self.balance_is_ok(quote_symbol, base_quantity)):
                                 log.warning("  NO BUY: Minimum {} balance limit reached.".format(quote_symbol))
-                            elif not (self.buy_price_is_right(symbol, price)):
+                            elif (self.enforce_price_check and not self.buy_price_is_right(symbol, price)):
                                 log.warning("  NO BUY: Held off buy due to high price compared to recent sell orders")
                             else:
                                 try:
+                                    # Send order and append to database
+                                    log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
                                     self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
+                                    db.insert_rows(
+                                        "orders",
+                                        [
+                                            [db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]
+                                        ]
+                                    )
                                 except BinanceAPIException as e:
                                     log.error(e.status_code)
                                     log.error(e.message)
@@ -586,35 +617,39 @@ class Binanza(object):
                         elif (indication < 0.0):
                             # SELL if balance, price and quantity is OK
                             self.set_decimal_precision(base_symbol, quote_symbol)
-                            quantity = self.balances[base_symbol] * self.trade_batch
+                            quantity = self.balances[base_symbol] * sell_batch
                             quantity, price = self.check_order(symbol, quantity, price)
                             if (quantity is None or price is None):
-                                log.info("  No sell, symbol closed for trading")
-                            log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
+                                log.info("  NO SELL: Symbol closed for trading")
                             if not (self.balance_is_ok(base_symbol, quantity)):
                                 log.warning("  NO SELL: Minimum {} balance limit reached".format(base_symbol))
-                            elif not (self.sell_price_is_right(symbol, price)):
+                            elif (self.enforce_price_check and not self.sell_price_is_right(symbol, price)):
                                 log.warning("  NO SELL: Held off sell due to low price compared to recent buy orders")
                             else:
                                 try:
+                                    log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
                                     self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
+                                    db.insert_rows(
+                                        "orders",
+                                        [
+                                            [db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]
+                                        ]
+                                    )
                                 except BinanceAPIException as e:
                                     log.error(e.status_code)
                                     log.error(e.message)
+                                    self.debug_min_notional(e.message, symbol)
 
                 # Optionally send orders by mail
-                if (logger.has_order() and self.gmail is not None):
+                if (logger.has_order() and self.gmail is not None and "orders_to" in self.gmail):
                     logger.send_gmail(self.gmail["username"], self.gmail["password"], self.gmail["orders_to"], subject="Binanza order")
-
-                # Shutdown logging to avoid handler chaos
-                logging.shutdown()
 
             except:
                 # Print/log errors
                 print(traceback.format_exc())
                 log.exception("Script error")
                 # Optionally send last run log by mail
-                if (logger.has_errors() and self.gmail is not None):
+                if (logger.has_errors() and self.gmail is not None and "errors_to" in self.gmail):
                     # Send one mail per day (or individual script process) to avoid spam
                     today = datetime.datetime.now().strftime("%Y.%m.%d")
                     if (logger.last_error_sent is None or logger.last_error_sent != today):
@@ -622,8 +657,149 @@ class Binanza(object):
                         logger.last_error_sent = today
 
             finally:
+                # Shutdown logging to avoid handler chaos
+                logging.shutdown()
+
                 # Continuous running or break
                 if (self.continuous):
                     time.sleep(self.sleep_duration)
                 else:
                     run = False
+
+    def debug_min_notional(self, msg, symbol):
+        if ("MIN_NOTIONAL" in msg):
+            for s in self.exchange_info["symbols"]:
+                if (s["symbol"] != symbol):
+                    continue
+                for f in s["filters"]:
+                    if (f["filterType"] == "MIN_NOTIONAL"):
+                        # Set Decimal context to base symbol precision
+                        getcontext().prec = s["baseAssetPrecision"]
+                        min_notional = Decimal(f["minNotional"])
+                        log = logging.getLogger("binanza")
+                        log.debug("Exchange info MIN_NOTIONAL value: {}".format(min_notional))
+
+
+class DB(object):
+    """Database handler for storing orders, recognized patterns etc.
+
+    Keyword arguments:
+    {db} (str) -- a path to a database. Is created if it does not exist,
+        defaults to binanza.db in the script folder
+    """
+    def __init__(self, db=os.path.join(sys.path[0], "binanza.db")):
+        self.db = db
+        # Database schema definition
+        self.tables = [
+            {
+                "name": "orders",
+                "fields": [
+                    {
+                        "name": "timestamp",
+                        "type": "DATE"
+                    }, {
+                        "name": "type",
+                        "type": "TEXT"
+                    }, {
+                        "name": "base",
+                        "type": "TEXT"
+                    }, {
+                        "name": "quote",
+                        "type": "TEXT"
+                    }, {
+                        "name": "quantity",
+                        "type": "NUMERIC"
+                    }, {
+                        "name": "price",
+                        "type": "NUMERIC"
+                    }, {
+                        "name": "base_balance",
+                        "type": "NUMERIC"
+                    }, {
+                        "name": "quote_balance",
+                        "type": "NUMERIC"
+                    }
+                ]
+            }, {
+                "name": "patterns",
+                "fields": [
+                    {
+                        "name": "timestamp",
+                        "type": "DATE"
+                    }, {
+                        "name": "base",
+                        "type": "TEXT"
+                    }, {
+                        "name": "quote",
+                        "type": "TEXT"
+                    }, {
+                        "name": "pattern",
+                        "type": "TEXT"
+                    }, {
+                        "name": "indication",
+                        "type": "NUMERIC"
+                    }, {
+                        "name": "price",
+                        "type": "NUMERIC"
+                    }
+                ]
+            }
+        ]
+        # Create database if it does not exist
+        if not (os.path.exists(db)):
+            self.create_database()
+
+
+    def create_database(self):
+        """Create database and tables based on defined schema."""
+        sql = sqlite3.connect(self.db)
+        c = sql.cursor()
+        for table in self.tables:
+            name = table["name"]
+            fields = ["{} {}".format(field["name"], field["type"]) for field in table["fields"]]
+            query = "CREATE TABLE {} ({})".format(name, ", ".join(fields))
+            c.execute(query)
+            sql.commit()
+        sql.close()
+
+    def insert_rows(self, table, rows):
+        """Insert rows into database table.
+
+        Keyword arguments:
+        table (str) -- the name of the table
+        rows (list) -- the list of rows to insert
+        """
+        if (len(rows) > 0):
+            for i in range(0, len(rows)):
+                rows[i] = self.localize(rows[i], table)
+            sql = sqlite3.connect(self.db)
+            c = sql.cursor()
+            fields = []
+            for i in range(0, len(rows[0])):
+                fields.append("?")
+            execute_string = "INSERT INTO {} VALUES ({})".format(table, ", ".join(fields))
+            c.executemany(execute_string, rows)
+            sql.commit()
+            sql.close()
+
+    def get_timestamp(self):
+        """Returns current timestamp in database friendly format."""
+        return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def localize(self, row, table_name):
+        table = [t for t in self.tables if t["name"] == table_name][0]
+        for i in range(0, len(row)):
+            if (row[i] is not None):
+                if (isinstance(row[i], str)):
+                    row[i] = row[i].strip()
+                field_type = table["fields"][i]["type"]
+                if (field_type in ["NUMERIC", "INTEGER"]):
+                    if (isinstance(row[i], str)):
+                        row[i] = row[i].replace(",", ".")
+                        row[i] = row[i].replace("%", "")
+                        row[i] = row[i].replace(" ", "")
+                    if (field_type == "NUMERIC"):
+                        row[i] = float(row[i])
+                    if (field_type == "INTEGER"):
+                        row[i] = int(row[i])
+        return row
