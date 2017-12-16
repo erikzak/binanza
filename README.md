@@ -15,11 +15,11 @@ Do not use this if you want to make money. I have no idea what I am doing.
 Usage
 -----
 
-Configure the script through config.txt, see comments for details about parameters. See main() in start_trading.py for example usage.
+Configure the script through config.txt (make a copy of config_example.txt), see comments for details about parameters. See main() in start_trading.py for example usage.
 
-Requires a Binance account and API access, go to account settings to enable then replace example API key and secret.
+Requires a Binance account and API access, go to account settings to enable then replace example API key and secret in start_trading.py.
 
-Run in console or as a service.
+Run start_trading.py in console or configure as a service.
 
 Has a node package that can be used to extract statistics from the database that is created, containing order history and recognized patterns.
 

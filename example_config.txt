@@ -23,6 +23,12 @@
 	
 	# Sleep duration between reruns in seconds, defaults to 5 minutes
 	"sleep_duration": 300,
+	
+	# List of mail recipients on errors
+	"errors_to_mail": ["your_email@address.com"],
+	
+	# List of mail recipients on errors
+	"orders_to_mail": ["your_email@address.com"],
 
 	# Specify which symbol pairs to trade, where the candlestick patterns
 	# of the base symbol are analyzed for favorable buy/sell situations and

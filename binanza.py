@@ -646,19 +646,19 @@ class Binanza(object):
                                     self.debug_min_notional(e.message, symbol)
 
                 # Optionally send orders by mail
-                if (logger.has_order() and self.gmail is not None and "orders_to" in self.gmail):
-                    logger.send_gmail(self.gmail["username"], self.gmail["password"], self.gmail["orders_to"], subject="Binanza order")
+                if (logger.has_order() and self.gmail is not None and len(self.orders_to_mail) > 0):
+                    logger.send_gmail(self.gmail["username"], self.gmail["password"], self.orders_to_mail, subject="Binanza order")
 
             except:
                 # Print/log errors
                 print(traceback.format_exc())
                 log.exception("Script error")
                 # Optionally send last run log by mail
-                if (logger.has_errors() and self.gmail is not None and "errors_to" in self.gmail):
+                if (logger.has_errors() and self.gmail is not None and len(self.errors_to_mail) > 0):
                     # Send one mail per day (or individual script process) to avoid spam
                     today = datetime.datetime.now().strftime("%Y.%m.%d")
                     if (logger.last_error_sent is None or logger.last_error_sent != today):
-                        logger.send_gmail(self.gmail["username"], self.gmail["password"], self.gmail["errors_to"], subject="Binanza error")
+                        logger.send_gmail(self.gmail["username"], self.gmail["password"], self.errors_to_mail, subject="Binanza error")
                         logger.last_error_sent = today
 
             finally:

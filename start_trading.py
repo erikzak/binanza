@@ -19,8 +19,7 @@ def main():
 		# Get gmail auth (remove or replace with own values)
 		f = open(os.path.join(sys.path[0], "gmail.txt"))
 		for line in f:
-			gmail_user, gmail_pass, recipient_list = [s.strip() for s in line.split(",")]
-			recipients = recipient_list.split(";")
+			gmail_user, gmail_pass = [s.strip() for s in line.split(",")]
 		f.close()
 
 		# Read config
@@ -43,12 +42,12 @@ def main():
 			min_balance = config["min_balance"],
 			continuous = config["continuous"],
 			sleep_duration = config["sleep_duration"],
+			errors_to_mail = config["errors_to_mail"],
+			orders_to_mail = config["orders_to_mail"],
 			# Send errors or order info using a gmail account
 			gmail = {
 				"username": gmail_user,
-				"password": gmail_pass,
-				"errors_to": recipients[:-1]
-				#"orders_to": recipients
+				"password": gmail_pass
 			}
 		)
 
