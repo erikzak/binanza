@@ -501,6 +501,11 @@ class Binanza(object):
                     if (a_quantity is None or a_quantity < min_notional):
                         a_quantity = min_notional
 
+            # Try to fix MIN_NOTIONAL filter errors when selling to BTC
+            if (symbol.endswith("BTC")):
+                while(a_quantity * a_price < 0.001):
+                    a_quantity += qty_step
+
         return a_quantity, a_price
 
     def trade(self, symbol_pairs):
