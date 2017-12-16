@@ -15,7 +15,7 @@ Do not use this if you want to make money. I have no idea what I am doing.
 Usage
 -----
 
-See main() in start_trading.py for example usage.
+Configure the script through config.txt, see comments for details about parameters. See main() in start_trading.py for example usage.
 
 Requires a Binance account and API access, go to account settings to enable then replace example API key and secret.
 
