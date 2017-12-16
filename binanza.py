@@ -123,13 +123,15 @@ class Binanza(object):
             running in continuous mode
         {config_file} (str) -- a path to a config file to re-read settings from
             on continuous runs
+        {errors_to_mail} (list) -- a list of recipients for error info if gmail
+            account specified
+        {orders_to_mail} (list) -- a list of recipients for order info if gmail
+            account specified
         {gmail} (dict) -- a dict with gmail authorization info and either a
             list of addresses to send order reports to or a list of addresses
             for error logs. Format: {
                 "username": <gmail user>,
-                "password": <gmail pass>,
-                "errors_to": <list of recipients>,
-                "orders_to": <list of recipients>
+                "password": <gmail pass>
             }
         """
         self.api_key = api_key
@@ -153,6 +155,10 @@ class Binanza(object):
             self.continuous = False
         if not (hasattr(self, "sleep_duration")):
             self.sleep_duration = 300
+        if not (hasattr(self, "errors_to_mail")):
+            self.errors_to_mail = []
+        if not (hasattr(self, "orders_to_mail")):
+            self.orders_to_mail = []
         if not (hasattr(self, "gmail")):
             self.gmail = None
 
