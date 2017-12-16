@@ -29,7 +29,7 @@ class Log(object):
     level -- the logging level enum to use, set this to logging.DEBUG to log
         last five pattern analysis inputs and method results
     """
-    def __init__(self, log_name="binanza", level=logging.INFO):
+    def __init__(self, log_name="binanza", level=logging.DEBUG):
         logging.basicConfig(level=logging.INFO, format='%(asctime)s\t%(levelname)s\t- %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
         self.log = logging.getLogger(log_name)
         # Configure
@@ -555,7 +555,7 @@ class Binanza(object):
                     buy_batch = Decimal(symbol_pair["buy_batch"])
                     sell_batch = Decimal(symbol_pair["sell_batch"])
 
-                    log.info("<b>{}/{}</b>".format(base_symbol, quote_symbol))
+                    log.info("{}/{}".format(base_symbol, quote_symbol))
 
                     # Get balances and exchange info
                     self.get_balances([base_symbol, quote_symbol])
