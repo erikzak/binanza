@@ -26,3 +26,4 @@ Dependencies
 
 * [TA-Lib](https://github.com/mrjbq7/ta-lib)
 * [python-binance](https://github.com/sammchardy/python-binance)
+* numpy
