@@ -438,9 +438,9 @@ class Binanza(object):
         {min_orders} (int) -- the minimum amount of orders for
             validating price against average
         """
-        if ("buy_order_check" in symbol_pair and symbol_pair["buy_order_check"] is False):
+        if ("buy_order_check" in symbol_pair and not symbol_pair["buy_order_check"]):
             return True
-        days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else 7
+        days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else None
         symbol = "{}{}".format(symbol_pair["base"], symbol_pair["quote"])
         order_history = self.get_order_average(symbol, "SELL", days)
         if (order_history["count"] == 0):
@@ -460,9 +460,9 @@ class Binanza(object):
         {min_orders} (int) -- the minimum amount of orders for
             validating price against average
         """
-        if ("sell_order_check" in symbol_pair and symbol_pair["sell_order_check"] is False):
+        if ("sell_order_check" in symbol_pair and not symbol_pair["sell_order_check"]):
             return True
-        days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else 7
+        days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else None
         symbol = "{}{}".format(symbol_pair["base"], symbol_pair["quote"])
         order_history = self.get_order_average(symbol, "BUY", days)
         if (order_history["count"] == 0):
