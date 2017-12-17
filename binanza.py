@@ -197,7 +197,7 @@ class Binanza(object):
             },
             "Dragonfly doji": {
                 "f": CDLDRAGONFLYDOJI,
-                "validators": [reversal_if_trend]
+                "validators": [reversal_if_long_trend]
             },
             "Engulfing pattern": {
                 "f": CDLENGULFING,
@@ -205,7 +205,7 @@ class Binanza(object):
             },
             "Evening doji star": {
                 "f": CDLEVENINGDOJISTAR,
-                "validators": [reversal_if_trend]
+                "validators": [reversal_if_long_trend]
             },
             "Evening star": {
                 "f": CDLEVENINGSTAR,
@@ -221,7 +221,7 @@ class Binanza(object):
             },
             "Morning doji star": {
                 "f": CDLMORNINGDOJISTAR,
-                "validators": [reversal_if_trend]
+                "validators": [reversal_if_long_trend]
             },
             "Morning star": {
                 "f": CDLMORNINGSTAR,
