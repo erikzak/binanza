@@ -147,10 +147,6 @@ class Binanza(object):
                 self.min_balance[symbol] = Decimal(self.min_balance[symbol])
         if not (hasattr(self, "kline_interval")):
             self.kline_interval = KLINE_INTERVAL_5MINUTE
-        if not (hasattr(self, "enforce_price_check")):
-            self.enforce_price_check = True
-        if not (hasattr(self, "price_check_days")):
-            self.price_check_days = 14
         if not (hasattr(self, "continuous")):
             self.continuous = False
         if not (hasattr(self, "sleep_duration")):
@@ -654,7 +650,7 @@ class Binanza(object):
                             log.info("  NO SELL: Symbol closed for trading")
                         if not (self.balance_is_ok(base_symbol, quantity)):
                             log.warning("  NO SELL: Minimum {} balance limit reached".format(base_symbol))
-                        elif (self.enforce_price_check and not self.sell_price_is_right(symbol, price)):
+                        elif (self.sell_price_is_right(symbol_pair, price)):
                             log.warning("  NO SELL: Held off sell due to low price compared to recent buy orders")
                         else:
                             try:
