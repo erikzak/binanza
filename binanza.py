@@ -380,7 +380,7 @@ class Binanza(object):
         """Converts seconds to days."""
         return seconds / 60.0 / 60.0 / 24.0
 
-    def get_order_average(self, symbol, side):
+    def get_order_average(self, symbol, side, days=7, min_orders=5):
         """Gets all orders of the Binance account (500 max) from the last week,
         extracts successfull sell or buy orders and calculates an average price
         per quantity.
@@ -388,6 +388,10 @@ class Binanza(object):
         Keyword arguments:
         symbol (str) -- the Binance symbol to fetch orders for
         side (str) -- the type of order to check, "BUY" or "SELL"
+        {days} (int) -- the number of days since today to
+            check historical orders
+        {min_orders} (int) -- the minimum amount of orders for
+            calculating average price
         """
         orders = self.client.get_all_orders(symbol=symbol)
 
@@ -413,30 +417,38 @@ class Binanza(object):
         avg_price = avg_price * Decimal(1.0005)
         return avg_price
 
-    def buy_price_is_right(self, symbol, price, inertia=1.0):
+    def buy_price_is_right(self, symbol_pair, price):
         """Checks if the price of a buy order is favorable by
         comparing it to the average of recent (last 500) sell orders.
         
         Keyword arguments:
-        symbol (str) -- the buy order symbol to check
-        price (Decimal) -- the market price per quantity 
+        symbol_pair (dict) -- the config symbol pair to check
+        price (Decimal) -- the market price per quantity
         """
-        avg_sell_price = self.get_order_average(symbol, "SELL")
-        if (avg_sell_price is not None and price * Decimal(inertia) > avg_sell_price):
+        if ("buy_order_check" not in symbol_pair):
+            return True
+        days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else 7
+        symbol = "{}{}".format(symbol_pair["base"], symbol_pair["quote"])
+        avg_sell_price = self.get_order_average(symbol, "SELL", days)
+        if (avg_sell_price is not None and price > avg_sell_price):
             # Buy price higher than average sell order
             return False
         return True
 
-    def sell_price_is_right(self, symbol, price, inertia=1.0):
+    def sell_price_is_right(self, symbol_pair, price):
         """Checks if the price of a sell order is favorable by
         comparing it to the average of recent (last 500) buy orders.
         
         Keyword arguments:
-        symbol (str) -- the sell order symbol to check
+        symbol_pair (dict) -- the config symbol pair to check
         price (Decimal) -- the market price per quantity
         """
-        avg_buy_price = self.get_order_average(symbol, "BUY")
-        if (avg_buy_price is not None and price * Decimal(inertia) < avg_buy_price):
+        if ("sell_order_check" not in symbol_pair):
+            return True
+        days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else 7
+        symbol = "{}{}".format(symbol_pair["base"], symbol_pair["quote"])
+        avg_buy_price = self.get_order_average(symbol, "BUY", days)
+        if (avg_buy_price is not None and price < avg_buy_price):
             # Sell price lower than average buy order
             return False
         return True
@@ -582,80 +594,81 @@ class Binanza(object):
                             res = res.replace("  ", " ")
                         res = res.replace("[ ", "[")
                         res = res.replace(" ]", "]")
-                        log.debug("    {:<31}: {:<20}".format(anal, res))
+                        log.debug("    {:<31}: {:<20}".format(anal, res).rstrip())
 
-                    # Determine buy/sell
+                    # Determine buy/sell, continue if no patterns detected
                     if (indication == 0.0):
                         log.info("  No patterns")
-                    else:
-                        # Set Decimal to quote symbol
-                        self.set_decimal_precision(symbol, quote_symbol)
-                        price = Decimal(inputs["close"][-1])
+                        continue
 
-                        # Print recognized patterns and available balances, and append to database
-                        log.info("Average indication value: {}".format(round(indication, 2)))
-                        log.info("Pattern(s): {}".format(", ".join(["{} [{}]".format(p["name"], p["indication"]) for p in recognized_patterns])))
-                        pattern_rows = [[db.get_timestamp(), base_symbol, quote_symbol, p["name"], p["indication"], price] for p in recognized_patterns]
-                        db.insert_rows("patterns", pattern_rows)
-                        log.info("Balances:")
-                        for b in self.balances:
-                            log.info("  {}: {}".format(b, self.balances[b]))
-                        
-                        if (indication > 0.0):
-                            # BUY if balance, price and quantity is OK
-                            base_quantity = self.balances[quote_symbol] * buy_batch
-                            if (quote_symbol in self.min_balance and self.balances[quote_symbol] - base_quantity < self.min_balance[quote_symbol]):
-                                base_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol]
-                            # Keep defined minimum balance 
-                            quantity, price = self.check_order(symbol, base_quantity / price, price)
-                            if (quantity is None or price is None):
-                                log.info("  NO BUY: Symbol closed for trading")
-                            if not (self.balance_is_ok(quote_symbol, base_quantity)):
-                                log.warning("  NO BUY: Minimum {} balance limit reached.".format(quote_symbol))
-                            elif (self.enforce_price_check and not self.buy_price_is_right(symbol, price)):
-                                log.warning("  NO BUY: Held off buy due to high price compared to recent sell orders")
-                            else:
-                                try:
-                                    # Send order and append to database
-                                    log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
-                                    self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
-                                    db.insert_rows(
-                                        "orders",
-                                        [
-                                            [db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]
-                                        ]
-                                    )
-                                except BinanceAPIException as e:
-                                    log.error(e.status_code)
-                                    log.error(e.message)
+                    # Set Decimal to quote symbol
+                    self.set_decimal_precision(symbol, quote_symbol)
+                    price = Decimal(inputs["close"][-1])
 
-                        elif (indication < 0.0):
-                            # SELL if balance, price and quantity is OK
-                            self.set_decimal_precision(base_symbol, quote_symbol)
-                            quantity = self.balances[base_symbol] * sell_batch
-                            # Keep defined minimum balance 
-                            if (base_symbol in self.min_balance and self.balances[base_symbol] - quantity < self.min_balance[base_symbol]):
-                                quantity = self.balances[base_symbol] - self.min_balance[base_symbol]
-                            quantity, price = self.check_order(symbol, quantity, price)
-                            if (quantity is None or price is None):
-                                log.info("  NO SELL: Symbol closed for trading")
-                            if not (self.balance_is_ok(base_symbol, quantity)):
-                                log.warning("  NO SELL: Minimum {} balance limit reached".format(base_symbol))
-                            elif (self.enforce_price_check and not self.sell_price_is_right(symbol, price)):
-                                log.warning("  NO SELL: Held off sell due to low price compared to recent buy orders")
-                            else:
-                                try:
-                                    log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
-                                    self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
-                                    db.insert_rows(
-                                        "orders",
-                                        [
-                                            [db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]
-                                        ]
-                                    )
-                                except BinanceAPIException as e:
-                                    log.error(e.status_code)
-                                    log.error(e.message)
+                    # Print recognized patterns and available balances, and append to database
+                    log.info("Average indication value: {}".format(round(indication, 2)))
+                    log.info("Pattern(s): {}".format(", ".join(["{} [{}]".format(p["name"], p["indication"]) for p in recognized_patterns])))
+                    pattern_rows = [[db.get_timestamp(), base_symbol, quote_symbol, p["name"], p["indication"], price] for p in recognized_patterns]
+                    db.insert_rows("patterns", pattern_rows)
+                    log.info("Balances:")
+                    for b in self.balances:
+                        log.info("  {}: {}".format(b, self.balances[b]))
+                    
+                    if (indication > 0.0):
+                        # BUY if balance, price and quantity is OK
+                        base_quantity = self.balances[quote_symbol] * buy_batch
+                        if (quote_symbol in self.min_balance and self.balances[quote_symbol] - base_quantity < self.min_balance[quote_symbol]):
+                            base_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol]
+                        # Keep defined minimum balance 
+                        quantity, price = self.check_order(symbol, base_quantity / price, price)
+                        if (quantity is None or price is None):
+                            log.info("  NO BUY: Symbol closed for trading")
+                        if not (self.balance_is_ok(quote_symbol, base_quantity)):
+                            log.warning("  NO BUY: Minimum {} balance limit reached.".format(quote_symbol))
+                        elif (self.buy_price_is_right(symbol_pair, price)):
+                            log.warning("  NO BUY: Held off buy due to high price compared to recent sell orders")
+                        else:
+                            try:
+                                # Send order and append to database
+                                log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
+                                self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
+                                db.insert_rows(
+                                    "orders",
+                                    [
+                                        [db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]
+                                    ]
+                                )
+                            except BinanceAPIException as e:
+                                log.error(e.status_code)
+                                log.error(e.message)
+
+                    elif (indication < 0.0):
+                        # SELL if balance, price and quantity is OK
+                        self.set_decimal_precision(base_symbol, quote_symbol)
+                        quantity = self.balances[base_symbol] * sell_batch
+                        # Keep defined minimum balance 
+                        if (base_symbol in self.min_balance and self.balances[base_symbol] - quantity < self.min_balance[base_symbol]):
+                            quantity = self.balances[base_symbol] - self.min_balance[base_symbol]
+                        quantity, price = self.check_order(symbol, quantity, price)
+                        if (quantity is None or price is None):
+                            log.info("  NO SELL: Symbol closed for trading")
+                        if not (self.balance_is_ok(base_symbol, quantity)):
+                            log.warning("  NO SELL: Minimum {} balance limit reached".format(base_symbol))
+                        elif (self.enforce_price_check and not self.sell_price_is_right(symbol, price)):
+                            log.warning("  NO SELL: Held off sell due to low price compared to recent buy orders")
+                        else:
+                            try:
+                                log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
+                                self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
+                                db.insert_rows(
+                                    "orders",
+                                    [
+                                        [db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]
+                                    ]
+                                )
+                            except BinanceAPIException as e:
+                                log.error(e.status_code)
+                                log.error(e.message)
 
                 # Optionally send orders by mail
                 if (logger.has_order() and self.gmail is not None and len(self.orders_to_mail) > 0):

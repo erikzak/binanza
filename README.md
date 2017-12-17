@@ -10,7 +10,7 @@ Disclaimer
 
 Do not use this if you want to make money. I have no idea what I am doing.
 
-<img src=https://i.imgur.com/l3v4P3s.jpg alt="Dog" title="Dog" width="200" />
+<img src=https://i.imgur.com/l3v4P3s.jpg alt="Dog" title="Dog" width="250" />
 
 Usage
 -----
