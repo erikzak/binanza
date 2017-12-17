@@ -17,16 +17,15 @@ Usage
 
 Configure the script through config.txt (make a copy of config_example.txt), see comments for details about parameters. See main() in start_trading.py for example usage.
 
-Requires a Binance account and API access, go to account settings to enable then replace example API key and secret in start_trading.py.
+Requires a Binance account and API access, go to account settings to enable then replace example API key and secret in start_trading.py somehow.
 
 Run start_trading.py in console or configure as a service.
 
-Has a node package that can be used to extract statistics from the database that is created, containing order history and recognized patterns.
+Has a node package that can be used to extract statistics from a database created on run containing order history and recognized patterns.
 
 Dependencies
 ------------
 
 * numpy
-* sqlite3
 * [TA-Lib](https://github.com/mrjbq7/ta-lib)
 * [python-binance](https://github.com/sammchardy/python-binance)
