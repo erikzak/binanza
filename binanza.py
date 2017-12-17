@@ -411,12 +411,12 @@ class Binanza(object):
             then = datetime.datetime.fromtimestamp(Decimal(order["time"]) / Decimal(1000.0))
             delta = now - then
             age_days = self.seconds_to_days(delta.total_seconds())
-            if (age_days < self.price_check_days and order["side"] == side and order["status"] in ["PARTIALLY_FILLED", "FILLED"]):
+            if (age_days < days and order["side"] == side and order["status"] in ["PARTIALLY_FILLED", "FILLED"]):
                 order_sum += Decimal(order["price"]) * Decimal(order["executedQty"])
                 quantity += Decimal(order["executedQty"])
                 n_orders += 1
 
-        if (n_orders == 0 or quantity == 0.0 or n_orders < 5):
+        if (n_orders == 0 or quantity == 0.0 or n_orders < min_orders):
             return None
 
         # Return average (including fee)
