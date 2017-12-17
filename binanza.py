@@ -405,7 +405,7 @@ class Binanza(object):
                 quantity += Decimal(order["executedQty"])
                 n_orders += 1
 
-        if (n_orders == 0 or quantity == 0.0):
+        if (n_orders == 0 or quantity == 0.0 or n_orders < 10):
             return None
 
         # Return average (including fee)
@@ -545,9 +545,10 @@ class Binanza(object):
                 # Init database
                 db = DB()
 
-                # Client
-                self.client = Client(self.api_key, self.api_secret)
                 for symbol_pair in self.symbol_pairs:
+                    # Client
+                    self.client = Client(self.api_key, self.api_secret)
+
                     # Settings
                     base_symbol = symbol_pair["base"]
                     quote_symbol = symbol_pair["quote"]
@@ -603,6 +604,9 @@ class Binanza(object):
                         if (indication > 0.0):
                             # BUY if balance, price and quantity is OK
                             base_quantity = self.balances[quote_symbol] * buy_batch
+                            if (quote_symbol in self.min_balance and self.balances[quote_symbol] - base_quantity < self.min_balance[quote_symbol]):
+                                base_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol]
+                            # Keep defined minimum balance 
                             quantity, price = self.check_order(symbol, base_quantity / price, price)
                             if (quantity is None or price is None):
                                 log.info("  NO BUY: Symbol closed for trading")
@@ -629,6 +633,9 @@ class Binanza(object):
                             # SELL if balance, price and quantity is OK
                             self.set_decimal_precision(base_symbol, quote_symbol)
                             quantity = self.balances[base_symbol] * sell_batch
+                            # Keep defined minimum balance 
+                            if (base_symbol in self.min_balance and self.balances[base_symbol] - quantity < self.min_balance[base_symbol]):
+                                quantity = self.balances[base_symbol] - self.min_balance[base_symbol]
                             quantity, price = self.check_order(symbol, quantity, price)
                             if (quantity is None or price is None):
                                 log.info("  NO SELL: Symbol closed for trading")
@@ -649,7 +656,6 @@ class Binanza(object):
                                 except BinanceAPIException as e:
                                     log.error(e.status_code)
                                     log.error(e.message)
-                                    self.debug_min_notional(e.message, symbol)
 
                 # Optionally send orders by mail
                 if (logger.has_order() and self.gmail is not None and len(self.orders_to_mail) > 0):
@@ -676,19 +682,6 @@ class Binanza(object):
                     time.sleep(self.sleep_duration)
                 else:
                     run = False
-
-    def debug_min_notional(self, msg, symbol):
-        if ("MIN_NOTIONAL" in msg):
-            for s in self.exchange_info["symbols"]:
-                if (s["symbol"] != symbol):
-                    continue
-                for f in s["filters"]:
-                    if (f["filterType"] == "MIN_NOTIONAL"):
-                        # Set Decimal context to base symbol precision
-                        getcontext().prec = s["baseAssetPrecision"]
-                        min_notional = Decimal(f["minNotional"])
-                        log = logging.getLogger("binanza")
-                        log.debug("Exchange info MIN_NOTIONAL value: {}".format(min_notional))
 
 
 class DB(object):
