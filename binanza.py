@@ -422,7 +422,7 @@ class Binanza(object):
                 n_orders += 1
 
         # Return average
-        avg_price = order_sum / quantity
+        avg_price = order_sum / quantity if (quantity > 0.0) else 0.0
         return {
             "avg": avg_price,
             "count": n_orders
@@ -438,11 +438,13 @@ class Binanza(object):
         {min_orders} (int) -- the minimum amount of orders for
             validating price against average
         """
-        if ("buy_order_check" not in symbol_pair):
+        if ("buy_order_check" in symbol_pair and symbol_pair["buy_order_check"] is False):
             return True
         days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else 7
         symbol = "{}{}".format(symbol_pair["base"], symbol_pair["quote"])
         order_history = self.get_order_average(symbol, "SELL", days)
+        if (order_history["count"] == 0):
+            return True
         if (order_history["count"] >= min_orders and price > order_history["avg"] * Decimal(1.0005)):
             # Buy price higher than average sell order, abort order
             return False
@@ -458,11 +460,13 @@ class Binanza(object):
         {min_orders} (int) -- the minimum amount of orders for
             validating price against average
         """
-        if ("sell_order_check" not in symbol_pair):
+        if ("sell_order_check" in symbol_pair and symbol_pair["sell_order_check"] is False):
             return True
         days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else 7
         symbol = "{}{}".format(symbol_pair["base"], symbol_pair["quote"])
         order_history = self.get_order_average(symbol, "BUY", days)
+        if (order_history["count"] == 0):
+            return True
         if (order_history["count"] >= min_orders and price < order_history["avg"] * Decimal(1.0005)):
             # Sell price lower than average buy order, abort order
             return False
@@ -549,13 +553,14 @@ class Binanza(object):
         symbol (str) -- the Binance trade symbol to check for stale orders
         """
         cancelled_orders = []
+        now = datetime.datetime.now()
         for order in self.client.get_open_orders(symbol=symbol):
             then = datetime.datetime.fromtimestamp(Decimal(order["time"]) / Decimal(1000.0))
             delta = now - then
             age_seconds = delta.total_seconds()
             if (age_seconds > self.order_lifetime):
-                cancelled_orders.push(order)
                 self.client.cancel_order(symbol=symbol, orderId=order["orderId"])
+                cancelled_orders.push(order)
         return cancelled_orders
 
     def trade(self, symbol_pairs):
