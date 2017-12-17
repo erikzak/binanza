@@ -145,6 +145,11 @@ class Binanza(object):
         else:
             for symbol in self.min_balance:
                 self.min_balance[symbol] = Decimal(self.min_balance[symbol])
+        if not (hasattr(self, "max_balance")):
+            self.max_balance = {}
+        else:
+            for symbol in self.max_balance:
+                self.max_balance[symbol] = Decimal(self.max_balance[symbol])
         if not (hasattr(self, "kline_interval")):
             self.kline_interval = KLINE_INTERVAL_5MINUTE
         if not (hasattr(self, "continuous")):
@@ -272,6 +277,12 @@ class Binanza(object):
             config = json.loads(contents)
             for param in config:
                 setattr(self, param, config[param])
+            if ("min_balance" in config):
+                for symbol in config["min_balance"]:
+                    self.min_balance[symbol] = Decimal(config["min_balance"][symbol])
+            if ("max_balance" in config):
+                for symbol in config["max_balance"]:
+                    self.max_balance[symbol] = Decimal(config["max_balance"][symbol])
             return
 
     def get_balances(self, symbols):
