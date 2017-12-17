@@ -405,7 +405,7 @@ class Binanza(object):
                 quantity += Decimal(order["executedQty"])
                 n_orders += 1
 
-        if (n_orders == 0 or quantity == 0.0 or n_orders < 10):
+        if (n_orders == 0 or quantity == 0.0 or n_orders < 5):
             return None
 
         # Return average (including fee)
