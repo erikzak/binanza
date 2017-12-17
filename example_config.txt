@@ -16,13 +16,8 @@
 		"XMR": 1.2
 	},
 	
-	# Flag for enforcing a profitability check on orders:
-	# Sell orders will not be placed if sell price is lower than the average buy price + fee for the price check duration
-	# Buy orders will not be placed if buy price is higher than the average sell price + fee for the price check duration
-	"enforce_price_check": true,
-	
-	# The amount of days to run a price check against
-	"price_check_days": 14,
+	# The maximum order lifetime before it is cancelled in seconds
+	"order_lifetime": 600,
 	
 	# Rerun function after sleep duration, will run once if not specified
 	"continuous": true,

@@ -140,28 +140,19 @@ class Binanza(object):
             setattr(self, key, item)
 
         # Set default values and convert supplied floats to Decimals
-        if not (hasattr(self, "min_balance")):
-            self.min_balance = {}
-        else:
-            for symbol in self.min_balance:
-                self.min_balance[symbol] = Decimal(self.min_balance[symbol])
-        if not (hasattr(self, "max_balance")):
-            self.max_balance = {}
-        else:
-            for symbol in self.max_balance:
-                self.max_balance[symbol] = Decimal(self.max_balance[symbol])
-        if not (hasattr(self, "kline_interval")):
-            self.kline_interval = KLINE_INTERVAL_5MINUTE
-        if not (hasattr(self, "continuous")):
-            self.continuous = False
-        if not (hasattr(self, "sleep_duration")):
-            self.sleep_duration = 300
-        if not (hasattr(self, "errors_to_mail")):
-            self.errors_to_mail = []
-        if not (hasattr(self, "orders_to_mail")):
-            self.orders_to_mail = []
-        if not (hasattr(self, "gmail")):
-            self.gmail = None
+        self.set_default("min_balance", {})
+        for symbol in self.min_balance:
+            self.min_balance[symbol] = Decimal(self.min_balance[symbol])
+        self.set_default("max_balance", {})
+        for symbol in self.max_balance:
+            self.max_balance[symbol] = Decimal(self.max_balance[symbol])
+        self.set_default("kline_interval", KLINE_INTERVAL_5MINUTE)
+        self.set_default("continuous", False)
+        self.set_default("sleep_duration", 300)
+        self.set_default("order_lifetime", 600)
+        self.set_default("errors_to_mail", [])
+        self.set_default("orders_to_mail", [])
+        self.set_default("gmail", None)
 
         # Candlestick validation functions
         def reversal_if_trend(indication, candles, factor=1, skip=0):
@@ -262,6 +253,11 @@ class Binanza(object):
         }
         return
 
+    def set_default(self, param, value):
+        if not hasattr(self, param):
+            setattr(self, param, value)
+        return
+
     def read_config(self):
             """Reads a configuration file and applies settings, so that the
             user does not have to restart the binanza service on changes."""
@@ -303,9 +299,17 @@ class Binanza(object):
         return
 
     def analyze_candles(self, candles):
-        """Uses TA-Lib to analyze candlesticks, and returns a result dict with
-        inputs used and analysis results as a dict with pattern name and
-        indication value as key-value pairs.
+        """Uses TA-Lib to analyze candlesticks, and returns
+        a result dict containing the following:
+
+        'inputs': the numpy inputs used for pattern recognition
+        'analyses': a dict containing key-pair values of pattern names and
+            indication value
+        'indication': a float of the mean indication value across patterns
+            that have been validated to be valid, used to decide buy/sell
+            actions
+        'patterns': a dict with key-value pairs of validated pattern names and
+            their indication value
 
         Keyword arguments:
         candles (list) -- the list of candlesticks
@@ -387,18 +391,19 @@ class Binanza(object):
         """Converts seconds to days."""
         return seconds / 60.0 / 60.0 / 24.0
 
-    def get_order_average(self, symbol, side, days=7, min_orders=5):
-        """Gets all orders of the Binance account (500 max) from the last week,
-        extracts successfull sell or buy orders and calculates an average price
-        per quantity.
+    def get_order_average(self, symbol, side, days=None):
+        """Gets orders of the Binance account (500 max) extracts successfull
+        sell/buy orders and calculates an average price per quantity.
+
+        Return is a dict with the following keys:
+        'avg': the calculated average price
+        'count': the number of orders
 
         Keyword arguments:
         symbol (str) -- the Binance symbol to fetch orders for
         side (str) -- the type of order to check, "BUY" or "SELL"
         {days} (int) -- the number of days since today to
             check historical orders
-        {min_orders} (int) -- the minimum amount of orders for
-            calculating average price
         """
         orders = self.client.get_all_orders(symbol=symbol)
 
@@ -411,52 +416,55 @@ class Binanza(object):
             then = datetime.datetime.fromtimestamp(Decimal(order["time"]) / Decimal(1000.0))
             delta = now - then
             age_days = self.seconds_to_days(delta.total_seconds())
-            if (age_days < days and order["side"] == side and order["status"] in ["PARTIALLY_FILLED", "FILLED"]):
+            if ((days is None or age_days < days) and order["side"] == side and order["status"] in ["PARTIALLY_FILLED", "FILLED"]):
                 order_sum += Decimal(order["price"]) * Decimal(order["executedQty"])
                 quantity += Decimal(order["executedQty"])
                 n_orders += 1
 
-        if (n_orders == 0 or quantity == 0.0 or n_orders < min_orders):
-            return None
-
-        # Return average (including fee)
+        # Return average
         avg_price = order_sum / quantity
-        avg_price = avg_price * Decimal(1.0005)
-        return avg_price
+        return {
+            "avg": avg_price,
+            "count": n_orders
+        }
 
-    def buy_price_is_right(self, symbol_pair, price):
+    def buy_price_is_right(self, symbol_pair, price, min_orders=5):
         """Checks if the price of a buy order is favorable by
         comparing it to the average of recent (last 500) sell orders.
         
         Keyword arguments:
         symbol_pair (dict) -- the config symbol pair to check
         price (Decimal) -- the market price per quantity
+        {min_orders} (int) -- the minimum amount of orders for
+            validating price against average
         """
         if ("buy_order_check" not in symbol_pair):
             return True
         days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else 7
         symbol = "{}{}".format(symbol_pair["base"], symbol_pair["quote"])
-        avg_sell_price = self.get_order_average(symbol, "SELL", days)
-        if (avg_sell_price is not None and price > avg_sell_price):
-            # Buy price higher than average sell order
+        order_history = self.get_order_average(symbol, "SELL", days)
+        if (order_history["count"] >= min_orders and price > order_history["avg"] * Decimal(1.0005)):
+            # Buy price higher than average sell order, abort order
             return False
         return True
 
-    def sell_price_is_right(self, symbol_pair, price):
+    def sell_price_is_right(self, symbol_pair, price, min_orders=5):
         """Checks if the price of a sell order is favorable by
         comparing it to the average of recent (last 500) buy orders.
         
         Keyword arguments:
         symbol_pair (dict) -- the config symbol pair to check
         price (Decimal) -- the market price per quantity
+        {min_orders} (int) -- the minimum amount of orders for
+            validating price against average
         """
         if ("sell_order_check" not in symbol_pair):
             return True
         days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else 7
         symbol = "{}{}".format(symbol_pair["base"], symbol_pair["quote"])
-        avg_buy_price = self.get_order_average(symbol, "BUY", days)
-        if (avg_buy_price is not None and price < avg_buy_price):
-            # Sell price lower than average buy order
+        order_history = self.get_order_average(symbol, "BUY", days)
+        if (order_history["count"] >= min_orders and price < order_history["avg"] * Decimal(1.0005)):
+            # Sell price lower than average buy order, abort order
             return False
         return True
 
@@ -533,6 +541,23 @@ class Binanza(object):
 
         return a_quantity, a_price
 
+    def cancel_stale_orders(self, symbol):
+        """Cancels open orders over a defined lifetime. Returns a list of
+        cancelled orders in the binance order format.
+
+        Keyword arguments:
+        symbol (str) -- the Binance trade symbol to check for stale orders
+        """
+        cancelled_orders = []
+        for order in self.client.get_open_orders(symbol=symbol):
+            then = datetime.datetime.fromtimestamp(Decimal(order["time"]) / Decimal(1000.0))
+            delta = now - then
+            age_seconds = delta.total_seconds()
+            if (age_seconds > self.order_lifetime):
+                cancelled_orders.push(order)
+                self.client.cancel_order(symbol=symbol, orderId=order["orderId"])
+        return cancelled_orders
+
     def trade(self, symbol_pairs):
         """Initiates the trader using a list of base and quote symbol pairs,
         where the candlestick patterns of the base symbol are analyzed for
@@ -580,6 +605,11 @@ class Binanza(object):
                     # Get balances and exchange info
                     self.get_balances([base_symbol, quote_symbol])
                     self.exchange_info = self.client.get_exchange_info()
+
+                    # Cancel stale orders
+                    cancelled_orders = self.cancel_stale_orders(symbol)
+                    for order in cancelled_orders:
+                        log.info("Cancelled order {}: {} {} @ {} {}/{}".format(order["orderId"], order["origQty"], base_symbol, order["price"], quote_symbol, base_symbol))
                     
                     # Analyze trend
                     candles = self.client.get_klines(symbol=symbol, interval=self.kline_interval)
@@ -642,7 +672,7 @@ class Binanza(object):
                                 db.insert_rows(
                                     "orders",
                                     [
-                                        [db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]
+                                        [db.get_timestamp(), "buy", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]
                                     ]
                                 )
                             except BinanceAPIException as e:
@@ -772,6 +802,8 @@ class DB(object):
         # Create database if it does not exist
         if not (os.path.exists(db)):
             self.create_database()
+        else:
+            self.check_database()
 
 
     def create_database(self):
@@ -785,6 +817,18 @@ class DB(object):
             c.execute(query)
             sql.commit()
         sql.close()
+
+    def check_database(self):
+        """Adds missing columns to database if schema has changed."""
+        sql = sqlite3.connect(self.db)
+        c = sql.cursor()
+        for table in self.tables:
+            # Select a row to get cursor object
+            cursor = c.execute('SELECT * from {} LIMIT 1'.format(table["name"]))
+            fields = [d[0] for d in cursor.description]
+            for f in table["fields"]:
+                if (f["name"] not in fields):
+                    cursor.execute("ALTER TABLE {} ADD COLUMN {} {}".format(table["name"], f["name"], f["type"]))
 
     def insert_rows(self, table, rows):
         """Insert rows into database table.
