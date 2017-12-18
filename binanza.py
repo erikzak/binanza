@@ -382,7 +382,7 @@ class Binanza(object):
             (
                 symbol in self.min_balance and 
                 self.balances[symbol] < self.min_balance[symbol]
-            )            
+            )
         ):
             return False
         return True
@@ -462,7 +462,7 @@ class Binanza(object):
         """
         if ("sell_order_check" in symbol_pair and not symbol_pair["sell_order_check"]):
             return True
-        days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else None
+        days = symbol_pair["check_days"] if ("check_days" in symbol_pair) else 7
         symbol = "{}{}".format(symbol_pair["base"], symbol_pair["quote"])
         order_history = self.get_order_average(symbol, "BUY", days)
         if (order_history["count"] == 0):
@@ -665,8 +665,8 @@ class Binanza(object):
                         quantity, price = self.check_order(symbol, base_quantity / price, price)
                         if (quantity is None or price is None):
                             log.info("  NO BUY: Symbol closed for trading")
-                        if not (self.balance_is_ok(quote_symbol, base_quantity)):
-                            log.warning("  NO BUY: Minimum {} balance limit reached.".format(quote_symbol))
+                        elif not (self.balance_is_ok(quote_symbol, base_quantity)):
+                            log.warning("  NO BUY: Minimum {} balance limit reached".format(quote_symbol))
                         elif (self.buy_price_is_right(symbol_pair, price)):
                             log.warning("  NO BUY: Held off buy due to high price compared to recent sell orders")
                         else:
@@ -674,15 +674,22 @@ class Binanza(object):
                                 # Send order and append to database
                                 log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
                                 self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
-                                db.insert_rows(
-                                    "orders",
-                                    [
-                                        [db.get_timestamp(), "buy", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]
-                                    ]
-                                )
+                                db.insert_rows("orders", [[db.get_timestamp(), "buy", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]])
                             except BinanceAPIException as e:
-                                log.error(e.status_code)
-                                log.error(e.message)
+                                # Retry on signature error with fresh client init
+                                if (int(e.status_code) == 400):
+                                    try:
+                                        log.debug("Order failed with signature error 400, retrying")
+                                        self.client = Client(self.api_key, self.api_secret)
+                                        self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
+                                        db.insert_rows("orders", [[db.get_timestamp(), "buy", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]])
+                                    except:
+                                        log.error(e.status_code)
+                                        log.error(e.message)
+                                else:
+                                    log.error(e.status_code)
+                                    log.error(e.message)
+
 
                     elif (indication < 0.0):
                         # SELL if balance, price and quantity is OK
@@ -694,7 +701,7 @@ class Binanza(object):
                         quantity, price = self.check_order(symbol, quantity, price)
                         if (quantity is None or price is None):
                             log.info("  NO SELL: Symbol closed for trading")
-                        if not (self.balance_is_ok(base_symbol, quantity)):
+                        elif not (self.balance_is_ok(base_symbol, quantity)):
                             log.warning("  NO SELL: Minimum {} balance limit reached".format(base_symbol))
                         elif (self.sell_price_is_right(symbol_pair, price)):
                             log.warning("  NO SELL: Held off sell due to low price compared to recent buy orders")
@@ -702,15 +709,21 @@ class Binanza(object):
                             try:
                                 log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
                                 self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
-                                db.insert_rows(
-                                    "orders",
-                                    [
-                                        [db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]
-                                    ]
-                                )
+                                db.insert_rows("orders", [[db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]])
                             except BinanceAPIException as e:
-                                log.error(e.status_code)
-                                log.error(e.message)
+                                # Retry on signature error with fresh client init
+                                if (int(e.status_code) == 400):
+                                    try:
+                                        log.debug("Order failed with signature error 400, retrying")
+                                        self.client = Client(self.api_key, self.api_secret)
+                                        self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
+                                        db.insert_rows("orders", [[db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]])
+                                    except:
+                                        log.error(e.status_code)
+                                        log.error(e.message)
+                                else:
+                                    log.error(e.status_code)
+                                    log.error(e.message)
 
                 # Optionally send orders by mail
                 if (logger.has_order() and self.gmail is not None and len(self.orders_to_mail) > 0):
