@@ -273,12 +273,10 @@ class Binanza(object):
             config = json.loads(contents)
             for param in config:
                 setattr(self, param, config[param])
-            if ("min_balance" in config):
-                for symbol in config["min_balance"]:
-                    self.min_balance[symbol] = Decimal(config["min_balance"][symbol])
-            if ("max_balance" in config):
-                for symbol in config["max_balance"]:
-                    self.max_balance[symbol] = Decimal(config["max_balance"][symbol])
+            for symbol in config["min_balance"]:
+                self.min_balance[symbol] = Decimal(config["min_balance"][symbol])
+            for symbol in config["max_balance"]:
+                self.max_balance[symbol] = Decimal(config["max_balance"][symbol])
             return
 
     def get_balances(self, symbols):
@@ -292,6 +290,8 @@ class Binanza(object):
         """
         self.balances = {}
         account = self.client.get_account()
+        for symbol in symbols:
+            self.balances[symbol] = Decimal(0.0)
         for balance in account["balances"]:
             for symbol in symbols:
                 if (balance["asset"] == symbol):
@@ -377,7 +377,6 @@ class Binanza(object):
         quantity (Decimal) -- the order quantity
         """
         if (
-            symbol not in self.balances or
             quantity > self.balances[symbol] or
             (
                 symbol in self.min_balance and 
@@ -667,7 +666,9 @@ class Binanza(object):
                             log.info("  NO BUY: Symbol closed for trading")
                         elif not (self.balance_is_ok(quote_symbol, base_quantity)):
                             log.warning("  NO BUY: Minimum {} balance limit reached".format(quote_symbol))
-                        elif (self.buy_price_is_right(symbol_pair, price)):
+                        elif (base_symbol in self.max_balance and self.balances[base_symbol] + base_quantity > self.max_balance[base_symbol]):
+                            log.warning("  NO BUY: Maximum {} balance limit reached".format(base_symbol))
+                        elif not (self.buy_price_is_right(symbol_pair, price)):
                             log.warning("  NO BUY: Held off buy due to high price compared to recent sell orders")
                         else:
                             try:
@@ -683,6 +684,7 @@ class Binanza(object):
                                         self.client = Client(self.api_key, self.api_secret)
                                         self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
                                         db.insert_rows("orders", [[db.get_timestamp(), "buy", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]])
+                                        log.debug("Success")
                                     except:
                                         log.error(e.status_code)
                                         log.error(e.message)
@@ -694,6 +696,7 @@ class Binanza(object):
                         # SELL if balance, price and quantity is OK
                         self.set_decimal_precision(base_symbol, quote_symbol)
                         quantity = self.balances[base_symbol] * sell_batch
+                        quote_quantity = quantity * price
                         # Keep defined minimum balance 
                         if (base_symbol in self.min_balance and self.balances[base_symbol] - quantity < self.min_balance[base_symbol]):
                             quantity = self.balances[base_symbol] - self.min_balance[base_symbol]
@@ -702,7 +705,9 @@ class Binanza(object):
                             log.info("  NO SELL: Symbol closed for trading")
                         elif not (self.balance_is_ok(base_symbol, quantity)):
                             log.warning("  NO SELL: Minimum {} balance limit reached".format(base_symbol))
-                        elif (self.sell_price_is_right(symbol_pair, price)):
+                        elif (quote_symbol in self.max_balance and self.balances[quote_symbol] + quote_quantity > self.max_balance[quote_symbol]):
+                            log.warning("  NO BUY: Maximum {} balance limit reached".format(base_symbol))
+                        elif not (self.sell_price_is_right(symbol_pair, price)):
                             log.warning("  NO SELL: Held off sell due to low price compared to recent buy orders")
                         else:
                             try:
@@ -717,6 +722,7 @@ class Binanza(object):
                                         self.client = Client(self.api_key, self.api_secret)
                                         self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
                                         db.insert_rows("orders", [[db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]])
+                                        log.debug("Success")
                                     except:
                                         log.error(e.status_code)
                                         log.error(e.message)
