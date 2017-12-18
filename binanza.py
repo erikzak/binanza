@@ -560,7 +560,7 @@ class Binanza(object):
             age_seconds = delta.total_seconds()
             if (age_seconds > self.order_lifetime):
                 self.client.cancel_order(symbol=symbol, orderId=order["orderId"])
-                cancelled_orders.push(order)
+                cancelled_orders.append(order)
         return cancelled_orders
 
     def trade(self, symbol_pairs):
@@ -689,7 +689,6 @@ class Binanza(object):
                                 else:
                                     log.error(e.status_code)
                                     log.error(e.message)
-
 
                     elif (indication < 0.0):
                         # SELL if balance, price and quantity is OK
