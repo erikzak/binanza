@@ -407,7 +407,7 @@ class Binanza(object):
         {days} (int) -- the number of days since today to
             check historical orders
         """
-        orders = self.client.get_all_orders(symbol=symbol)
+        orders = self.client.get_all_orders(symbol=symbol, recvWindow=10000)
 
         # Calculate average
         order_sum = Decimal(0.0)
@@ -556,12 +556,12 @@ class Binanza(object):
         """
         cancelled_orders = []
         now = datetime.datetime.now()
-        for order in self.client.get_open_orders(symbol=symbol):
+        for order in self.client.get_open_orders(symbol=symbol, recvWindow=10000):
             then = datetime.datetime.fromtimestamp(Decimal(order["time"]) / Decimal(1000.0))
             delta = now - then
             age_seconds = delta.total_seconds()
             if (age_seconds > self.order_lifetime):
-                self.client.cancel_order(symbol=symbol, orderId=order["orderId"])
+                self.client.cancel_order(symbol=symbol, orderId=order["orderId"], recvWindow=10000)
                 self.db.delete_order(order["orderId"])
                 cancelled_orders.append(order)
         return cancelled_orders
