@@ -715,6 +715,9 @@ class Binanza(object):
                             except BinanceAPIException as e:
                                 log.error(e.status_code)
                                 log.error(e.message)
+                            except:
+                                log.exception("Order error")
+                                continue
 
                 # Optionally send orders by mail
                 if (logger.has_order() and self.gmail is not None and len(self.orders_to_mail) > 0):
