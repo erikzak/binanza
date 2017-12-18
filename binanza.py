@@ -47,8 +47,6 @@ class Log(object):
         full_log.setLevel(level)
         full_log.setFormatter(formatter)
         self.log.addHandler(full_log)
-        # Other stuff
-        self.last_error_sent = None
         return
 
     def has_order(self):
@@ -110,19 +108,23 @@ class Binanza(object):
         Keyword arguments:
         api_key (str) -- your Binance API key
         api_secret (str) -- your Binance API secret
+        {config_file} (str) -- a path to a config file to re-read settings from
+            on continuous runs
         {min_balance} (dict) -- a dict of symbols and minimum balances as
             key-value pairs used to determine if an trade should go through.
             If no minimum balance is defined for a symbol the trader will
             always try to trade the defined fraction on pattern recognition
+        {max_balance} (dict) -- same as min_balance but for a maximum balance
+            the trader will stop at when buying
         {kline_interval} (str) -- a candlestick time interval to fetch for
             analysis, the last 500 bins will be fetched. Defaults to 5 minutes
         {continuous} (bool) -- a flag specifying if the trader should
             continuously keep trading with a specified break between runs.
             Defaults to a single analysis (and trade if pattern found)
+        {order_lifetime} (int) -- a duration in seconds that stale orders will
+            live before the trader cancels them
         {sleep_duration} (int) -- a number of seconds to sleep between runs if
             running in continuous mode
-        {config_file} (str) -- a path to a config file to re-read settings from
-            on continuous runs
         {errors_to_mail} (list) -- a list of recipients for error info if gmail
             account specified
         {orders_to_mail} (list) -- a list of recipients for order info if gmail
@@ -140,6 +142,7 @@ class Binanza(object):
             setattr(self, key, item)
 
         # Set default values and convert supplied floats to Decimals
+        self.set_default("config_file", None)
         self.set_default("min_balance", {})
         for symbol in self.min_balance:
             self.min_balance[symbol] = Decimal(self.min_balance[symbol])
@@ -261,7 +264,7 @@ class Binanza(object):
     def read_config(self):
             """Reads a configuration file and applies settings, so that the
             user does not have to restart the binanza service on changes."""
-            if not (hasattr(self, "config_file")):
+            if (not hasattr(self, "config_file") or self.config_file is None):
                 return
             f = open(os.path.join(sys.path[0], "config.txt"))
             contents = ""
@@ -559,6 +562,7 @@ class Binanza(object):
             age_seconds = delta.total_seconds()
             if (age_seconds > self.order_lifetime):
                 self.client.cancel_order(symbol=symbol, orderId=order["orderId"])
+                self.db.delete_order(order["orderId"])
                 cancelled_orders.append(order)
         return cancelled_orders
 
@@ -591,7 +595,7 @@ class Binanza(object):
                 self.read_config()
 
                 # Init database
-                db = DB()
+                self.db = DB()
 
                 for symbol_pair in self.symbol_pairs:
                     # Client
@@ -619,38 +623,41 @@ class Binanza(object):
                     candles = self.client.get_klines(symbol=symbol, interval=self.kline_interval)
                     results = self.analyze_candles(candles)
                     inputs = results["inputs"]
-                    analyses = results["analyses"]
                     indication = results["indication"]
                     recognized_patterns = results["patterns"]
+                    #analyses = results["analyses"]
 
                     # Debug
                     log.debug("  Volumes: {}".format([int(v) for v in inputs["volume"][-5:]]))
                     #log.debug("  LAST 5 CANDLESTICK INPUTS:")
                     #for param in ["open", "high", "low", "close"]:
                     #    log.debug("    {}: {}".format(param, inputs[param][-5:]))
-                    log.debug("  LAST 5 CANDLESTICK ANALYSES:")
-                    for anal in sorted(analyses.keys()):
-                        res = str(analyses[anal][-5:])
-                        while ("  " in res):
-                            res = res.replace("  ", " ")
-                        res = res.replace("[ ", "[")
-                        res = res.replace(" ]", "]")
-                        log.debug("    {:<31}: {:<20}".format(anal, res).rstrip())
+                    #log.debug("  LAST 5 CANDLESTICK ANALYSES:")
+                    #for anal in sorted(analyses.keys()):
+                    #    res = str(analyses[anal][-5:])
+                    #    while ("  " in res):
+                    #        res = res.replace("  ", " ")
+                    #    res = res.replace("[ ", "[")
+                    #    res = res.replace(" ]", "]")
+                    #    log.debug("    {:<31}: {:<20}".format(anal, res).rstrip())
+
+                    # Set Decimal to quote symbol
+                    self.set_decimal_precision(symbol, quote_symbol)
+                    price = Decimal(inputs["close"][-1])
+
+                    # Update previously stored patterns
+                    self.db.update_patterns(base_symbol, quote_symbol, price)
 
                     # Determine buy/sell, continue if no patterns detected
                     if (indication == 0.0):
                         log.info("  No patterns")
                         continue
 
-                    # Set Decimal to quote symbol
-                    self.set_decimal_precision(symbol, quote_symbol)
-                    price = Decimal(inputs["close"][-1])
-
                     # Print recognized patterns and available balances, and append to database
                     log.info("Average indication value: {}".format(round(indication, 2)))
                     log.info("Pattern(s): {}".format(", ".join(["{} [{}]".format(p["name"], p["indication"]) for p in recognized_patterns])))
-                    pattern_rows = [[db.get_timestamp(), base_symbol, quote_symbol, p["name"], p["indication"], price] for p in recognized_patterns]
-                    db.insert_rows("patterns", pattern_rows)
+                    for pattern in recognized_patterns:
+                        self.db.add_pattern(pattern, base_symbol, quote_symbol, price)
                     log.info("Balances:")
                     for b in self.balances:
                         log.info("  {}: {}".format(b, self.balances[b]))
@@ -660,37 +667,28 @@ class Binanza(object):
                         base_quantity = self.balances[quote_symbol] * buy_batch
                         if (quote_symbol in self.min_balance and self.balances[quote_symbol] - base_quantity < self.min_balance[quote_symbol]):
                             base_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol]
-                        # Keep defined minimum balance 
+                        # Check order for correct values according to exchange info
                         quantity, price = self.check_order(symbol, base_quantity / price, price)
                         if (quantity is None or price is None):
                             log.info("  NO BUY: Symbol closed for trading")
+                        # Check balances for min/max settings
                         elif not (self.balance_is_ok(quote_symbol, base_quantity)):
                             log.warning("  NO BUY: Minimum {} balance limit reached".format(quote_symbol))
                         elif (base_symbol in self.max_balance and self.balances[base_symbol] + base_quantity > self.max_balance[base_symbol]):
                             log.warning("  NO BUY: Maximum {} balance limit reached".format(base_symbol))
+                        # Check price
                         elif not (self.buy_price_is_right(symbol_pair, price)):
                             log.warning("  NO BUY: Held off buy due to high price compared to recent sell orders")
                         else:
+                            # Perform buy
                             try:
                                 # Send order and append to database
                                 log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
-                                self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
-                                db.insert_rows("orders", [[db.get_timestamp(), "buy", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]])
+                                order = self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
+                                self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
                             except BinanceAPIException as e:
-                                # Retry on signature error with fresh client init
-                                if (int(e.status_code) == 400):
-                                    try:
-                                        log.debug("Order failed with signature error 400, retrying")
-                                        self.client = Client(self.api_key, self.api_secret)
-                                        self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
-                                        db.insert_rows("orders", [[db.get_timestamp(), "buy", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]])
-                                        log.debug("Success")
-                                    except:
-                                        log.error(e.status_code)
-                                        log.error(e.message)
-                                else:
-                                    log.error(e.status_code)
-                                    log.error(e.message)
+                                log.error(e.status_code)
+                                log.error(e.message)
 
                     elif (indication < 0.0):
                         # SELL if balance, price and quantity is OK
@@ -712,23 +710,11 @@ class Binanza(object):
                         else:
                             try:
                                 log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
-                                self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
-                                db.insert_rows("orders", [[db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]])
+                                order = self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
+                                self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
                             except BinanceAPIException as e:
-                                # Retry on signature error with fresh client init
-                                if (int(e.status_code) == 400):
-                                    try:
-                                        log.debug("Order failed with signature error 400, retrying")
-                                        self.client = Client(self.api_key, self.api_secret)
-                                        self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
-                                        db.insert_rows("orders", [[db.get_timestamp(), "sell", base_symbol, quote_symbol, quantity, price, self.balances[base_symbol], self.balances[quote_symbol]]])
-                                        log.debug("Success")
-                                    except:
-                                        log.error(e.status_code)
-                                        log.error(e.message)
-                                else:
-                                    log.error(e.status_code)
-                                    log.error(e.message)
+                                log.error(e.status_code)
+                                log.error(e.message)
 
                 # Optionally send orders by mail
                 if (logger.has_order() and self.gmail is not None and len(self.orders_to_mail) > 0):
@@ -740,11 +726,7 @@ class Binanza(object):
                 log.exception("Script error")
                 # Optionally send last run log by mail
                 if (logger.has_errors() and self.gmail is not None and len(self.errors_to_mail) > 0):
-                    # Send one mail per day (or individual script process) to avoid spam
-                    today = datetime.datetime.now().strftime("%Y.%m.%d")
-                    if (logger.last_error_sent is None or logger.last_error_sent != today):
-                        logger.send_gmail(self.gmail["username"], self.gmail["password"], self.errors_to_mail, subject="Binanza error")
-                        logger.last_error_sent = today
+                    logger.send_gmail(self.gmail["username"], self.gmail["password"], self.errors_to_mail, subject="Binanza error")
 
             finally:
                 # Shutdown logging to avoid handler chaos
@@ -795,6 +777,9 @@ class DB(object):
                     }, {
                         "name": "quote_balance",
                         "type": "NUMERIC"
+                    }, {
+                        "name": "order_id",
+                        "type": "NUMERIC"
                     }
                 ]
             }, {
@@ -818,6 +803,24 @@ class DB(object):
                     }, {
                         "name": "price",
                         "type": "NUMERIC"
+                    }, {
+                        "name": "m5",
+                        "type": "NUMERIC"
+                    }, {
+                        "name": "m10",
+                        "type": "NUMERIC"
+                    }, {
+                        "name": "m15",
+                        "type": "NUMERIC"
+                    }, {
+                        "name": "m30",
+                        "type": "NUMERIC"
+                    }, {
+                        "name": "m60",
+                        "type": "NUMERIC"
+                    }, {
+                        "name": "m120",
+                        "type": "NUMERIC"
                     }
                 ]
             }
@@ -831,27 +834,54 @@ class DB(object):
 
     def create_database(self):
         """Create database and tables based on defined schema."""
+        for table in self.tables:
+            self.add_table(table)
+        return
+            
+
+    def add_table(self, table):
+        """Add a table to the database."""
         sql = sqlite3.connect(self.db)
         c = sql.cursor()
-        for table in self.tables:
-            name = table["name"]
-            fields = ["{} {}".format(field["name"], field["type"]) for field in table["fields"]]
-            query = "CREATE TABLE {} ({})".format(name, ", ".join(fields))
-            c.execute(query)
-            sql.commit()
+        name = table["name"]
+        fields = ["{} {}".format(field["name"], field["type"]) for field in table["fields"]]
+        query = "CREATE TABLE {} ({})".format(name, ", ".join(fields))
+        c.execute(query)
+        sql.commit()
         sql.close()
+        return
+
+    def add_field(self, table, field):
+        sql = sqlite3.connect(self.db)
+        c = sql.cursor()
+        query = "ALTER TABLE {} ADD COLUMN {} {}".format(table["name"], field["name"], field["type"])
+        c.execute(query)
+        sql.commit()
+        sql.close()
+        return
 
     def check_database(self):
         """Adds missing columns to database if schema has changed."""
         sql = sqlite3.connect(self.db)
         c = sql.cursor()
+        # Get list of tables
+        c.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        db_tables = [t[0] for t in c.fetchall()]
+        sql.close()
         for table in self.tables:
+            # Add table if missing
+            if (table["name"] not in db_tables):
+                self.add_table(table)
             # Select a row to get cursor object
+            sql = sqlite3.connect(self.db)
+            c = sql.cursor()
             cursor = c.execute('SELECT * from {} LIMIT 1'.format(table["name"]))
+            sql.close()
             fields = [d[0] for d in cursor.description]
             for f in table["fields"]:
                 if (f["name"] not in fields):
-                    cursor.execute("ALTER TABLE {} ADD COLUMN {} {}".format(table["name"], f["name"], f["type"]))
+                    self.add_field(table, f)
+        return
 
     def insert_rows(self, table, rows):
         """Insert rows into database table.
@@ -872,6 +902,69 @@ class DB(object):
             c.executemany(execute_string, rows)
             sql.commit()
             sql.close()
+
+    def delete_rows(self, table, where):
+        """Deletes a row from a database table based on a query.
+
+        Keyword arguments:
+        table (str) -- the name of the table
+        where (str) -- the where query for rows to delete
+        """
+        sql = sqlite3.connect(self.db)
+        c = sql.cursor()
+        query = "DELETE FROM {} WHERE {}".format(table, where)
+        c.execute(query)
+        sql.commit()
+        sql.close()
+        return
+
+    def add_order(self, order, base_symbol, quote_symbol, base_balance=None, quote_balance=None):
+        """Adds an order to the orders table using
+        the binance-python API response."""
+        self.insert_rows("orders", [
+            [
+                self.get_timestamp(),
+                order["side"].lower(),
+                base_symbol,
+                quote_symbol,
+                order["origQty"],
+                order["price"],
+                base_balance,
+                quote_balance,
+                order["orderId"]
+            ]
+        ])
+        return
+
+    def delete_order(self, order_id):
+        self.delete_rows("orders", "order_id = '{}'".format(order_id))
+        return
+
+    def add_pattern(self, pattern, base_symbol, quote_symbol, price):
+        """Adds a pattern to the patterns table."""
+        row = [self.get_timestamp(), base_symbol, quote_symbol, pattern["name"], pattern["indication"], price, None, None, None, None, None, None]
+        self.insert_rows("patterns", [row])
+        return
+
+    def update_patterns(self, base_symbol, quote_symbol, price):
+        """Updates pattern rows in database with price values
+        at defined intervals."""
+        minutes = [5, 10, 15, 30, 60, 120]
+        sql = sqlite3.connect(self.db)
+        c = sql.cursor()
+        now = self.get_timestamp()
+        for i in range(0, len(minutes)):
+            current = minutes[i]
+            field = "m{}".format(minutes[i])
+            last_m = minutes[i - 1] if (i != 0) else 0
+            next_m = minutes[i + 1] if (i != len(minutes) - 1) else current * 2
+            last_s = (current - (current - last_m) / 2) * 60 if (i != 0) else 0
+            next_s = (current + (next_m - current) / 2) * 60
+            query = "UPDATE patterns SET {} = {} WHERE {} IS NULL AND base = '{}' AND quote = '{}' AND strftime('%s', '{}') - strftime('%s', timestamp) BETWEEN {} AND {}".format(field, price, field, base_symbol, quote_symbol, now, last_s, next_s)
+            c.execute(query)
+        sql.commit()
+        sql.close()
+        return
 
     def get_timestamp(self):
         """Returns current timestamp in database friendly format."""
