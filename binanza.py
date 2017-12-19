@@ -616,8 +616,8 @@ class Binanza(object):
                     base_symbol = symbol_pair["base"]
                     quote_symbol = symbol_pair["quote"]
                     symbol = "{}{}".format(base_symbol, quote_symbol)
-                    buy_batch = Decimal(symbol_pair["buy_batch"])
-                    sell_batch = Decimal(symbol_pair["sell_batch"])
+                    buy_batch = Decimal(symbol_pair["buy_batch"]) if ("buy_batch" in symbol_pair and symbol_pair["buy_batch"] != 0.0) else None
+                    sell_batch = Decimal(symbol_pair["sell_batch"]) if ("sell_batch" in symbol_pair and symbol_pair["sell_batch"] != 0.0) else None
 
                     log.info("{}/{}".format(base_symbol, quote_symbol))
 
@@ -665,16 +665,18 @@ class Binanza(object):
                         continue
 
                     # Print recognized patterns and available balances, and append to database
-                    log.info("Average indication value: {}".format(round(indication, 2)))
-                    log.info("Pattern(s): {}".format(", ".join(["{} [{}]".format(p["name"], p["indication"]) for p in recognized_patterns])))
+                    log.info("  Average indication value: {}".format(round(indication, 2)))
+                    log.info("  Pattern(s): {}".format(", ".join(["{} [{}]".format(p["name"], p["indication"]) for p in recognized_patterns])))
                     for pattern in recognized_patterns:
                         self.db.add_pattern(pattern, base_symbol, quote_symbol, price)
-                    log.info("Balances:")
+                    log.info("  Balances:")
                     for b in self.balances:
-                        log.info("  {}: {}".format(b, self.balances[b]))
+                        log.info("    {}: {}".format(b, self.balances[b]))
                     
                     if (indication > 0.0):
                         # BUY if balance, price and quantity is OK
+                        if (buy_batch is None):
+                            continue
                         base_quantity = self.balances[quote_symbol] * buy_batch
                         if (quote_symbol in self.min_balance and self.balances[quote_symbol] - base_quantity < self.min_balance[quote_symbol]):
                             base_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol]
@@ -703,6 +705,8 @@ class Binanza(object):
 
                     elif (indication < 0.0):
                         # SELL if balance, price and quantity is OK
+                        if (sell_batch is None):
+                            continue
                         self.set_decimal_precision(base_symbol, quote_symbol)
                         quantity = self.balances[base_symbol] * sell_batch
                         quote_quantity = quantity * price
