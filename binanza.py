@@ -540,8 +540,8 @@ class Binanza(object):
                     if (a_quantity is None or a_quantity < min_notional):
                         a_quantity = min_notional
 
-            # Try to fix MIN_NOTIONAL filter errors when selling to BTC
-            if (symbol.endswith("BTC")):
+            # Try to fix MIN_NOTIONAL filter errors when selling to BTC or ETH
+            if (symbol.endswith("BTC") or symbol.endswith("ETH")):
                 while(a_quantity * a_price < 0.001):
                     a_quantity += qty_step
 
@@ -719,9 +719,12 @@ class Binanza(object):
                                 log.exception("Order error")
                                 continue
 
-                # Optionally send orders by mail
+                # Optionally send orders and errors by mail
                 if (logger.has_order() and self.gmail is not None and len(self.orders_to_mail) > 0):
                     logger.send_gmail(self.gmail["username"], self.gmail["password"], self.orders_to_mail, subject="Binanza order")
+                # Optionally send last run log by mail on errors
+                if (logger.has_errors() and self.gmail is not None and len(self.errors_to_mail) > 0):
+                    logger.send_gmail(self.gmail["username"], self.gmail["password"], self.errors_to_mail, subject="Binanza error")
 
             except:
                 # Print/log errors

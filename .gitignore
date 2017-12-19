@@ -103,6 +103,11 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+# node
+node_modules
+package.json
+package-lock.json
+
 # custom
 key.txt
 config.txt
