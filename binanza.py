@@ -488,15 +488,18 @@ class Binanza(object):
                 getcontext().prec = s["baseAssetPrecision"] if (symbol == s["baseAsset"]) else s["quotePrecision"]
         return
 
-    def check_order(self, symbol, quantity, price):
+    def check_order(self, base_symbol, quote_symbol, quantity, price):
         """Compares defined order quantity and price against exchange info
         filters, and adjusts them to the minimum allowable values and
         tick sizes.
 
         Keyword arguments:
-        symbol (str) -- the Binance trade symbol
-        quanitity (Decimal) -- the quantity to check
+        base_symbol (str) -- the base Binance trade symbol
+        quote_symbol (str) -- the quote Binance trade symbol
+        quantity (Decimal) -- the quantity to check
+        price (Decimal) -- the desired price to check
         """
+        symbol = base_symbol + quote_symbol
         a_quantity = None
         a_price = None
         for s in self.exchange_info["symbols"]:
@@ -541,9 +544,11 @@ class Binanza(object):
                         a_quantity = min_notional
 
             # Try to fix MIN_NOTIONAL filter errors when selling to BTC or ETH
-            if (symbol.endswith("BTC") or symbol.endswith("ETH")):
-                while(a_quantity * a_price < 0.001):
-                    a_quantity += qty_step
+            btc_symbol = quote_symbol + "BTC"
+            for ticker in self.tickers:
+                if (ticker["symbol"] == btc_symbol):
+                    while(a_quantity * a_price * Decimal(ticker["price"]) < Decimal(0.001)):
+                        a_quantity += qty_step
 
         return a_quantity, a_price
 
@@ -600,7 +605,9 @@ class Binanza(object):
                 for symbol_pair in self.symbol_pairs:
                     # Client
                     self.client = Client(self.api_key, self.api_secret)
-
+                    
+                    # Get all tickers
+                    self.tickers = self.client.get_all_tickers()
                     # Settings
                     base_symbol = symbol_pair["base"]
                     quote_symbol = symbol_pair["quote"]
@@ -668,7 +675,7 @@ class Binanza(object):
                         if (quote_symbol in self.min_balance and self.balances[quote_symbol] - base_quantity < self.min_balance[quote_symbol]):
                             base_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol]
                         # Check order for correct values according to exchange info
-                        quantity, price = self.check_order(symbol, base_quantity / price, price)
+                        quantity, price = self.check_order(base_symbol, quote_symbol, base_quantity / price, price)
                         if (quantity is None or price is None):
                             log.info("  NO BUY: Symbol closed for trading")
                         # Check balances for min/max settings
@@ -684,7 +691,7 @@ class Binanza(object):
                             try:
                                 # Send order and append to database
                                 log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
-                                order = self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price)
+                                order = self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price, recvWindow=10000)
                                 self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
                             except BinanceAPIException as e:
                                 log.error(e.status_code)
@@ -698,7 +705,7 @@ class Binanza(object):
                         # Keep defined minimum balance 
                         if (base_symbol in self.min_balance and self.balances[base_symbol] - quantity < self.min_balance[base_symbol]):
                             quantity = self.balances[base_symbol] - self.min_balance[base_symbol]
-                        quantity, price = self.check_order(symbol, quantity, price)
+                        quantity, price = self.check_order(base_symbol, quote_symbol, quantity, price)
                         if (quantity is None or price is None):
                             log.info("  NO SELL: Symbol closed for trading")
                         elif not (self.balance_is_ok(base_symbol, quantity)):
@@ -710,7 +717,7 @@ class Binanza(object):
                         else:
                             try:
                                 log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
-                                order = self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price)
+                                order = self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price, recvWindow=10000)
                                 self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
                             except BinanceAPIException as e:
                                 log.error(e.status_code)
