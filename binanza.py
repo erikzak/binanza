@@ -543,12 +543,16 @@ class Binanza(object):
                     if (a_quantity is None or a_quantity < min_notional):
                         a_quantity = min_notional
 
-            # Try to fix MIN_NOTIONAL filter errors when selling to BTC or ETH
-            btc_symbol = quote_symbol + "BTC"
-            for ticker in self.tickers:
-                if (ticker["symbol"] == btc_symbol):
-                    while(a_quantity * a_price * Decimal(ticker["price"]) < Decimal(0.001)):
-                        a_quantity += qty_step
+            # Try to fix MIN_NOTIONAL filter errors
+            if (quote_symbol != "BTC"):
+                btc_symbol = quote_symbol + "BTC"
+                for ticker in self.tickers:
+                    if (ticker["symbol"] == btc_symbol):
+                        while(a_quantity * a_price * Decimal(ticker["price"]) < Decimal(0.001)):
+                            a_quantity += qty_step
+            else:
+                while (a_quantity * a_price < Decimal(0.001)):
+                    a_quantity += qty_step
 
         return a_quantity, a_price
 
