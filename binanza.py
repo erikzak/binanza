@@ -668,6 +668,13 @@ class Binanza(object):
         if (base_symbol in self.min_balance and self.balances[base_symbol] - base_quantity < self.min_balance[base_symbol]):
             base_quantity = self.balances[base_symbol] - self.min_balance[base_symbol]
 
+        # Convert to quote quantity for order check
+        quote_quantity = base_quantity * price
+
+        # Check if quote symbol has max quantity set, and adjust quote quantity if needed
+        if (quote_symbol in self.max_balance and self.balances[quote_symbol] + quote_quantity > self.max_balance[quote_symbol]):
+            base_quantity = (self.max_balance[quote_symbol] - self.balances[quote_symbol]) / price
+
         # Adjust quantity and price to exchange info limits
         base_quantity, price = self.check_order(base_symbol, quote_symbol, base_quantity, price)
         
@@ -675,13 +682,6 @@ class Binanza(object):
         if (base_quantity is None or price is None):
             log.info("  NO SELL: Symbol closed for trading")
             return
-
-        # Check if base has max quantity set, and adjust base quantity if needed 
-        if (base_symbol in self.max_balance and self.balances[base_symbol] + base_quantity > self.max_balance[base_symbol]):
-            base_quantity = self.max_balance[base_symbol] - self.balances[base_symbol]
-
-        # Convert to quote quantity for order check
-        quote_quantity = base_quantity * price
 
         # Recheck adjusted balances for min/max settings
         if (base_quantity > self.balances[base_symbol] or (base_symbol in self.min_balance and self.balances[base_symbol] - base_quantity < self.min_balance[base_symbol])):
