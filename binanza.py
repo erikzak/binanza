@@ -448,7 +448,7 @@ class Binanza(object):
         if (order_history["count"] == 0):
             return True
         if (order_history["count"] >= min_orders and price > order_history["avg"] * Decimal(1.0005)):
-            # Buy price higher than average sell order, abort order
+            # Buy price higher than average sell order (plus fee), abort order
             return False
         return True
 
@@ -470,7 +470,7 @@ class Binanza(object):
         if (order_history["count"] == 0):
             return True
         if (order_history["count"] >= min_orders and price < order_history["avg"] * Decimal(1.0005)):
-            # Sell price lower than average buy order, abort order
+            # Sell price lower than average buy order (plus fee), abort order
             return False
         return True
 
@@ -677,15 +677,15 @@ class Binanza(object):
                         # BUY if balance, price and quantity is OK
                         if (buy_batch is None):
                             continue
-                        base_quantity = self.balances[quote_symbol] * buy_batch
-                        if (quote_symbol in self.min_balance and self.balances[quote_symbol] - base_quantity < self.min_balance[quote_symbol]):
-                            base_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol]
+                        quote_quantity = self.balances[quote_symbol] * buy_batch
+                        if (quote_symbol in self.min_balance and self.balances[quote_symbol] - quote_quantity < self.min_balance[quote_symbol]):
+                            quote_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol]
                         # Check order for correct values according to exchange info
-                        quantity, price = self.check_order(base_symbol, quote_symbol, base_quantity / price, price)
-                        if (quantity is None or price is None):
+                        base_quantity, price = self.check_order(base_symbol, quote_symbol, base_quantity / price, price)
+                        if (base_quantity is None or price is None):
                             log.info("  NO BUY: Symbol closed for trading")
                         # Check balances for min/max settings
-                        elif not (self.balance_is_ok(quote_symbol, base_quantity)):
+                        elif not (self.balance_is_ok(quote_symbol, quote_quantity)):
                             log.warning("  NO BUY: Minimum {} balance limit reached".format(quote_symbol))
                         elif (base_symbol in self.max_balance and self.balances[base_symbol] + base_quantity > self.max_balance[base_symbol]):
                             log.warning("  NO BUY: Maximum {} balance limit reached".format(base_symbol))
@@ -696,8 +696,8 @@ class Binanza(object):
                             # Perform buy
                             try:
                                 # Send order and append to database
-                                log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
-                                order = self.client.order_limit_buy(symbol=symbol, quantity=quantity, price=price, recvWindow=10000)
+                                log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(base_quantity, base_symbol, price, quote_symbol, base_symbol, base_quantity * price, quote_symbol))
+                                order = self.client.order_limit_buy(symbol=symbol, quantity=base_quantity, price=price, recvWindow=10000)
                                 self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
                             except BinanceAPIException as e:
                                 log.error(e.status_code)
@@ -708,24 +708,24 @@ class Binanza(object):
                         if (sell_batch is None):
                             continue
                         self.set_decimal_precision(base_symbol, quote_symbol)
-                        quantity = self.balances[base_symbol] * sell_batch
-                        quote_quantity = quantity * price
+                        base_quantity = self.balances[base_symbol] * sell_batch
+                        quote_quantity = base_quantity * price
                         # Keep defined minimum balance 
-                        if (base_symbol in self.min_balance and self.balances[base_symbol] - quantity < self.min_balance[base_symbol]):
-                            quantity = self.balances[base_symbol] - self.min_balance[base_symbol]
-                        quantity, price = self.check_order(base_symbol, quote_symbol, quantity, price)
-                        if (quantity is None or price is None):
+                        if (base_symbol in self.min_balance and self.balances[base_symbol] - base_quantity < self.min_balance[base_symbol]):
+                            base_quantity = self.balances[base_symbol] - self.min_balance[base_symbol]
+                        base_quantity, price = self.check_order(base_symbol, quote_symbol, base_quantity, price)
+                        if (base_quantity is None or price is None):
                             log.info("  NO SELL: Symbol closed for trading")
-                        elif not (self.balance_is_ok(base_symbol, quantity)):
+                        elif not (self.balance_is_ok(base_symbol, base_quantity)):
                             log.warning("  NO SELL: Minimum {} balance limit reached".format(base_symbol))
                         elif (quote_symbol in self.max_balance and self.balances[quote_symbol] + quote_quantity > self.max_balance[quote_symbol]):
-                            log.warning("  NO BUY: Maximum {} balance limit reached".format(base_symbol))
+                            log.warning("  NO BUY: Maximum {} balance limit reached".format(quote_symbol))
                         elif not (self.sell_price_is_right(symbol_pair, price)):
                             log.warning("  NO SELL: Held off sell due to low price compared to recent buy orders")
                         else:
                             try:
-                                log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(quantity, base_symbol, price, quote_symbol, base_symbol, quantity * price, quote_symbol))
-                                order = self.client.order_limit_sell(symbol=symbol, quantity=quantity, price=price, recvWindow=10000)
+                                log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(base_quantity, base_symbol, price, quote_symbol, base_symbol, base_quantity * price, quote_symbol))
+                                order = self.client.order_limit_sell(symbol=symbol, quantity=base_quantity, price=price, recvWindow=10000)
                                 self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
                             except BinanceAPIException as e:
                                 log.error(e.status_code)
