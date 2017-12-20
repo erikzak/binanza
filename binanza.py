@@ -553,6 +553,7 @@ class Binanza(object):
         Keyword arguments:
         symbol (str) -- the Binance trade symbol to check for stale orders
         """
+        log = logging.getLogger(self.log_name)
         cancelled_orders = []
         now = datetime.datetime.now()
         for order in self.client.get_open_orders(symbol=symbol, recvWindow=10000):
@@ -560,9 +561,12 @@ class Binanza(object):
             delta = now - then
             age_seconds = delta.total_seconds()
             if (age_seconds > self.order_lifetime):
-                self.client.cancel_order(symbol=symbol, orderId=order["orderId"], recvWindow=10000)
-                self.db.delete_order(order["orderId"])
-                cancelled_orders.append(order)
+                try:
+                    self.client.cancel_order(symbol=symbol, orderId=order["orderId"], recvWindow=10000)
+                    self.db.delete_order(order["orderId"])
+                    cancelled_orders.append(order)
+                except:
+                    log.warning("Unable to delete stale order {}".format(order["orderId"]))
         return cancelled_orders
 
     def place_buy_order(self, symbol_pair, price):
