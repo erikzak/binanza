@@ -142,6 +142,8 @@ class Binanza(object):
             setattr(self, key, item)
 
         # Set default values and convert supplied floats to Decimals
+        self.log_name = "binanza"
+        self.recvWindow = 10000
         self.set_default("config_file", None)
         self.set_default("min_balance", {})
         for symbol in self.min_balance:
@@ -372,23 +374,6 @@ class Binanza(object):
         }
         return results
 
-    def balance_is_ok(self, symbol, quantity):
-        """Checks if a minimum balance is defined for a symbol and if the
-        balance is over the limit.
-
-        symbol (str) -- the currency symbol as defined by Binance
-        quantity (Decimal) -- the order quantity
-        """
-        if (
-            quantity > self.balances[symbol] or
-            (
-                symbol in self.min_balance and 
-                self.balances[symbol] < self.min_balance[symbol]
-            )
-        ):
-            return False
-        return True
-
     def seconds_to_days(self, seconds):
         """Converts seconds to days."""
         return seconds / 60.0 / 60.0 / 24.0
@@ -502,7 +487,9 @@ class Binanza(object):
         symbol = base_symbol + quote_symbol
         a_quantity = None
         a_price = None
+        min_notional = None
         for s in self.exchange_info["symbols"]:
+            # Look for relevant info dict
             if (s["symbol"] != symbol):
                 continue
 
@@ -534,14 +521,17 @@ class Binanza(object):
                         a_quantity = Decimal(min_qty)
                     while (a_quantity < quantity):
                         a_quantity += qty_step
+                    # Subtract one step to respect min/max limits
+                    a_quantity -= qty_step
 
                 if (f["filterType"] == "MIN_NOTIONAL"):
                     # Set Decimal context to base symbol precision
                     getcontext().prec = s["baseAssetPrecision"]
                     min_notional = Decimal(f["minNotional"])
-                    # Set quantity to min notional
-                    if (a_quantity is None or a_quantity < min_notional):
-                        a_quantity = min_notional
+            
+            # Set quantity to min notional
+            if (min_notional is not None and (a_quantity is None or a_quantity < min_notional)):
+                a_quantity = min_notional
 
             # Try to fix MIN_NOTIONAL filter errors
             if (quote_symbol != "BTC"):
@@ -575,6 +565,158 @@ class Binanza(object):
                 cancelled_orders.append(order)
         return cancelled_orders
 
+    def place_buy_order(self, symbol_pair, price):
+        """Generates parameters for a buy order respecting exchange info
+        and places it if balances and price check out.
+
+        Keyword arguments:
+        symbol_pair (dict) -- the symbol pair to use for the buy order
+        price (Decimal) -- the defined price for the order
+        """
+        # Get logger
+        log = logging.getLogger(self.log_name)
+
+        # Get base / quote symbols
+        base_symbol = symbol_pair["base"]
+        quote_symbol = symbol_pair["quote"]
+        symbol = base_symbol + quote_symbol
+
+        # Check if buy batch is defined (abort if 0 / None)
+        buy_batch = Decimal(symbol_pair["buy_batch"]) if ("buy_batch" in symbol_pair and symbol_pair["buy_batch"] != 0.0) else None
+        if (buy_batch is None):
+            return
+
+        # Calculate quote quantity to use for buy
+        self.set_decimal_precision(symbol_pair, quote_symbol)
+        quote_quantity = self.balances[quote_symbol] * buy_batch
+
+        # Check if quote symbol has min balance set, and adjust quote quantity if needed
+        if (quote_symbol in self.min_balance and self.balances[quote_symbol] - quote_quantity < self.min_balance[quote_symbol]):
+            quote_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol]
+
+        # Convert to base quantity
+        base_quantity = quote_quantity / price
+
+        # Check if base symbol has max quantity set, and adjust base quantity if needed 
+        if (base_symbol in self.max_balance and self.balances[base_symbol] + base_quantity > self.max_balance[base_symbol]):
+            base_quantity = self.max_balance[base_symbol] - self.balances[base_symbol]
+
+        # Adjust quantity and price to exchange info limits
+        base_quantity, price = self.check_order(base_symbol, quote_symbol, base_quantity, price)
+
+        # Abort if symbol closed for trade on exchange
+        if (base_quantity is None or price is None):
+            log.info("  NO BUY: Symbol closed for trading")
+            return
+
+        # Recheck adjusted balances for min/max settings
+        if (quote_quantity > self.balances[quote_symbol] or (quote_symbol in self.min_balance and self.balances[quote_symbol] - quote_quantity < self.min_balance[quote_symbol])):
+            log.warning("  NO BUY: Minimum {} balance limit reached".format(quote_symbol))
+            return
+        if (base_symbol in self.max_balance and self.balances[base_symbol] + base_quantity > self.max_balance[base_symbol]):
+            log.warning("  NO BUY: Maximum {} balance limit reached".format(base_symbol))
+            return
+
+        # Check price against average of previous sell orders
+        if not (self.buy_price_is_right(symbol_pair, price)):
+            log.warning("  NO BUY: Held off buy due to high price compared to recent sell orders")
+            return
+        
+        # Place buy order
+        try:
+            # Send order and append to database
+            log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(base_quantity, base_symbol, price, quote_symbol, base_symbol, base_quantity * price, quote_symbol))
+            order = self.client.order_limit_buy(symbol=symbol, quantity=base_quantity, price=price, recvWindow=self.recvWindow)
+            self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
+        except BinanceAPIException as e:
+            log.error(e.status_code)
+            log.error(e.message)
+        except:
+            log.exception("Order error")
+        return
+
+    def place_sell_order(self, symbol_pair, price):
+        """Generates parameters for a sell order respecting exchange info
+        and places it if balances and price check out.
+
+        Keyword arguments:
+        symbol_pair (dict) -- the symbol pair to use for the sell order
+        price (Decimal) -- the defined price for the order
+        """
+        # Get logger
+        log = logging.getLogger(self.log_name)
+
+        # Get base / quote symbols
+        base_symbol = symbol_pair["base"]
+        quote_symbol = symbol_pair["quote"]
+        symbol = base_symbol + quote_symbol
+
+        # Check if sell batch is defined (abort if 0 / None)
+        sell_batch = Decimal(symbol_pair["sell_batch"]) if ("sell_batch" in symbol_pair and symbol_pair["sell_batch"] != 0.0) else None
+        if (sell_batch is None):
+            return
+
+        # Get base quantity to sell
+        self.set_decimal_precision(symbol_pair, base_symbol)
+        base_quantity = self.balances[base_symbol] * sell_batch
+
+        # Check if base symbol has min balance set, and adjust base quantity if needed
+        if (base_symbol in self.min_balance and self.balances[base_symbol] - base_quantity < self.min_balance[base_symbol]):
+            base_quantity = self.balances[base_symbol] - self.min_balance[base_symbol]
+
+        # Adjust quantity and price to exchange info limits
+        base_quantity, price = self.check_order(base_symbol, quote_symbol, base_quantity, price)
+        
+        # Abort if symbol closed for trade on exchange
+        if (base_quantity is None or price is None):
+            log.info("  NO SELL: Symbol closed for trading")
+            return
+
+        # Check if base has max quantity set, and adjust base quantity if needed 
+        if (base_symbol in self.max_balance and self.balances[base_symbol] + base_quantity > self.max_balance[base_symbol]):
+            base_quantity = self.max_balance[base_symbol] - self.balances[base_symbol]
+
+        # Convert to quote quantity for order check
+        quote_quantity = base_quantity * price
+
+        # Recheck adjusted balances for min/max settings
+        if (base_quantity > self.balances[base_symbol] or (base_symbol in self.min_balance and self.balances[base_symbol] - base_quantity < self.min_balance[base_symbol])):
+            log.warning("  NO SELL: Minimum {} balance limit reached".format(base_symbol))
+            return
+        if (quote_symbol in self.max_balance and self.balances[quote_symbol] + quote_quantity > self.max_balance[quote_symbol]):
+            log.warning("  NO BUY: Maximum {} balance limit reached".format(quote_symbol))
+            return
+
+        # Check price against average of previous sell orders
+        if not (self.sell_price_is_right(symbol_pair, price)):
+            log.warning("  NO SELL: Held off sell due to low price compared to recent buy orders")
+            return
+
+        try:
+            log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(base_quantity, base_symbol, price, quote_symbol, base_symbol, base_quantity * price, quote_symbol))
+            order = self.client.order_limit_sell(symbol=symbol, quantity=base_quantity, price=price, recvWindow=self.recvWindow)
+            self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
+        except BinanceAPIException as e:
+            log.error(e.status_code)
+            log.error(e.message)
+        except:
+            log.exception("Order error")
+        return
+
+    def log_balances(self):
+        """Logs the balances of the current symbol pair."""
+        log = logging.getLogger(self.log_name)
+        log.info("  Balances:")
+        for b in self.balances:
+            log.info("    {}: {}".format(b, self.balances[b]))
+
+    def log_new_patterns(self, recognized_patterns, base_symbol, quote_symbol, price):
+        """Logs newly recognized patterns and stores them in the database."""
+        log = logging.getLogger(self.log_name)
+        log.info("  Pattern(s): {}".format(", ".join(["{} [{}]".format(p["name"], p["indication"]) for p in recognized_patterns])))
+        for pattern in recognized_patterns:
+            self.db.add_pattern(pattern, base_symbol, quote_symbol, price)
+
     def trade(self, symbol_pairs):
         """Initiates the trader using a list of base and quote symbol pairs,
         where the candlestick patterns of the base symbol are analyzed for
@@ -586,21 +728,25 @@ class Binanza(object):
         Keyword arguments:
         symbol_pairs (list) -- the list of dicts containing base and quote
             symbols. Each symbol pair will be analyzed in order each run.
-            Example: [{"base": "IOTA", "quote": "ETH"}]
+            Example: [{
+                "base": "IOTA",
+                "quote": "ETH",
+                "buy_batch": 0.05,
+                "sell_batch": 0.3
+            }]
         """
         self.symbol_pairs = symbol_pairs
         # Log
-        log_name = "binanza"
-        logger = Log(log_name)
+        logger = Log(self.log_name)
 
         # Run function
         run = True
         while (run):
             try:
                 # Get logger
-                log = logging.getLogger(log_name)
+                log = logging.getLogger(self.log_name)
 
-                # Re-read config
+                # Re-read config (if defined)
                 self.read_config()
 
                 # Init database
@@ -616,9 +762,7 @@ class Binanza(object):
                     base_symbol = symbol_pair["base"]
                     quote_symbol = symbol_pair["quote"]
                     symbol = "{}{}".format(base_symbol, quote_symbol)
-                    buy_batch = Decimal(symbol_pair["buy_batch"]) if ("buy_batch" in symbol_pair and symbol_pair["buy_batch"] != 0.0) else None
-                    sell_batch = Decimal(symbol_pair["sell_batch"]) if ("sell_batch" in symbol_pair and symbol_pair["sell_batch"] != 0.0) else None
-
+                    
                     log.info("{}/{}".format(base_symbol, quote_symbol))
 
                     # Get balances and exchange info
@@ -636,27 +780,16 @@ class Binanza(object):
                     inputs = results["inputs"]
                     indication = results["indication"]
                     recognized_patterns = results["patterns"]
-                    #analyses = results["analyses"]
+                    analyses = results["analyses"]
 
                     # Debug
-                    log.debug("  Volumes: {}".format([int(v) for v in inputs["volume"][-5:]]))
-                    #log.debug("  LAST 5 CANDLESTICK INPUTS:")
-                    #for param in ["open", "high", "low", "close"]:
-                    #    log.debug("    {}: {}".format(param, inputs[param][-5:]))
-                    #log.debug("  LAST 5 CANDLESTICK ANALYSES:")
-                    #for anal in sorted(analyses.keys()):
-                    #    res = str(analyses[anal][-5:])
-                    #    while ("  " in res):
-                    #        res = res.replace("  ", " ")
-                    #    res = res.replace("[ ", "[")
-                    #    res = res.replace(" ]", "]")
-                    #    log.debug("    {:<31}: {:<20}".format(anal, res).rstrip())
+                    self.log_debug(inputs, analyses)
 
-                    # Set Decimal to quote symbol
+                    # Set Decimal to quote symbol and get latest close price
                     self.set_decimal_precision(symbol, quote_symbol)
                     price = Decimal(inputs["close"][-1])
 
-                    # Update previously stored patterns
+                    # Update previously stored patterns with subsequent prices at defined time intervals
                     self.db.update_patterns(base_symbol, quote_symbol, price)
 
                     # Determine buy/sell, continue if no patterns detected
@@ -666,73 +799,17 @@ class Binanza(object):
 
                     # Print recognized patterns and available balances, and append to database
                     log.info("  Average indication value: {}".format(round(indication, 2)))
-                    log.info("  Pattern(s): {}".format(", ".join(["{} [{}]".format(p["name"], p["indication"]) for p in recognized_patterns])))
-                    for pattern in recognized_patterns:
-                        self.db.add_pattern(pattern, base_symbol, quote_symbol, price)
-                    log.info("  Balances:")
-                    for b in self.balances:
-                        log.info("    {}: {}".format(b, self.balances[b]))
+                    self.log_new_patterns(recognized_patterns, base_symbol, quote_symbol, price)
+                    self.log_balances()
                     
+                    # Buy or sell based in trend indication value
                     if (indication > 0.0):
-                        # BUY if balance, price and quantity is OK
-                        if (buy_batch is None):
-                            continue
-                        quote_quantity = self.balances[quote_symbol] * buy_batch
-                        if (quote_symbol in self.min_balance and self.balances[quote_symbol] - quote_quantity < self.min_balance[quote_symbol]):
-                            quote_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol]
-                        # Check order for correct values according to exchange info
-                        base_quantity, price = self.check_order(base_symbol, quote_symbol, base_quantity / price, price)
-                        if (base_quantity is None or price is None):
-                            log.info("  NO BUY: Symbol closed for trading")
-                        # Check balances for min/max settings
-                        elif not (self.balance_is_ok(quote_symbol, quote_quantity)):
-                            log.warning("  NO BUY: Minimum {} balance limit reached".format(quote_symbol))
-                        elif (base_symbol in self.max_balance and self.balances[base_symbol] + base_quantity > self.max_balance[base_symbol]):
-                            log.warning("  NO BUY: Maximum {} balance limit reached".format(base_symbol))
-                        # Check price
-                        elif not (self.buy_price_is_right(symbol_pair, price)):
-                            log.warning("  NO BUY: Held off buy due to high price compared to recent sell orders")
-                        else:
-                            # Perform buy
-                            try:
-                                # Send order and append to database
-                                log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(base_quantity, base_symbol, price, quote_symbol, base_symbol, base_quantity * price, quote_symbol))
-                                order = self.client.order_limit_buy(symbol=symbol, quantity=base_quantity, price=price, recvWindow=10000)
-                                self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
-                            except BinanceAPIException as e:
-                                log.error(e.status_code)
-                                log.error(e.message)
+                        # Try to place a buy order
+                        self.place_buy_order(symbol_pair, price)
 
                     elif (indication < 0.0):
-                        # SELL if balance, price and quantity is OK
-                        if (sell_batch is None):
-                            continue
-                        self.set_decimal_precision(base_symbol, quote_symbol)
-                        base_quantity = self.balances[base_symbol] * sell_batch
-                        quote_quantity = base_quantity * price
-                        # Keep defined minimum balance 
-                        if (base_symbol in self.min_balance and self.balances[base_symbol] - base_quantity < self.min_balance[base_symbol]):
-                            base_quantity = self.balances[base_symbol] - self.min_balance[base_symbol]
-                        base_quantity, price = self.check_order(base_symbol, quote_symbol, base_quantity, price)
-                        if (base_quantity is None or price is None):
-                            log.info("  NO SELL: Symbol closed for trading")
-                        elif not (self.balance_is_ok(base_symbol, base_quantity)):
-                            log.warning("  NO SELL: Minimum {} balance limit reached".format(base_symbol))
-                        elif (quote_symbol in self.max_balance and self.balances[quote_symbol] + quote_quantity > self.max_balance[quote_symbol]):
-                            log.warning("  NO BUY: Maximum {} balance limit reached".format(quote_symbol))
-                        elif not (self.sell_price_is_right(symbol_pair, price)):
-                            log.warning("  NO SELL: Held off sell due to low price compared to recent buy orders")
-                        else:
-                            try:
-                                log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(base_quantity, base_symbol, price, quote_symbol, base_symbol, base_quantity * price, quote_symbol))
-                                order = self.client.order_limit_sell(symbol=symbol, quantity=base_quantity, price=price, recvWindow=10000)
-                                self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
-                            except BinanceAPIException as e:
-                                log.error(e.status_code)
-                                log.error(e.message)
-                            except:
-                                log.exception("Order error")
-                                continue
+                        # Try to place a sell order
+                        self.place_sell_order(symbol_pair, price)
 
                 # Optionally send orders and errors by mail
                 if (logger.has_order() and self.gmail is not None and len(self.orders_to_mail) > 0):
@@ -758,6 +835,22 @@ class Binanza(object):
                     time.sleep(self.sleep_duration)
                 else:
                     run = False
+        return
+
+    def log_debug(self, inputs, analyses):
+        log = logging.getLogger(self.log_name)
+        log.debug("  Volumes: {}".format([int(v) for v in inputs["volume"][-5:]]))
+        #log.debug("  LAST 5 CANDLESTICK INPUTS:")
+        #for param in ["open", "high", "low", "close"]:
+        #    log.debug("    {}: {}".format(param, inputs[param][-5:]))
+        #log.debug("  LAST 5 CANDLESTICK ANALYSES:")
+        #for anal in sorted(analyses.keys()):
+        #    res = str(analyses[anal][-5:])
+        #    while ("  " in res):
+        #        res = res.replace("  ", " ")
+        #    res = res.replace("[ ", "[")
+        #    res = res.replace(" ]", "]")
+        #    log.debug("    {:<31}: {:<20}".format(anal, res).rstrip())
 
 
 class DB(object):
