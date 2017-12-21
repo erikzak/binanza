@@ -21,7 +21,7 @@ Requires a Binance account and API access, go to account settings to enable then
 
 Run start_trading.py in console or configure as a service.
 
-Has a node package that can be used to extract statistics from a database created on run containing order history and recognized patterns.
+Has a node package that can be used to extract statistics from a database created on run containing order history and recognized patterns. npm install binanza in script folder, defaults to outputting statistics through port 80.
 
 Dependencies
 ------------
