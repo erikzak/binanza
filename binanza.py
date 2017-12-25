@@ -278,10 +278,12 @@ class Binanza(object):
             config = json.loads(contents)
             for param in config:
                 setattr(self, param, config[param])
-            for symbol in config["min_balance"]:
-                self.min_balance[symbol] = Decimal(config["min_balance"][symbol])
-            for symbol in config["max_balance"]:
-                self.max_balance[symbol] = Decimal(config["max_balance"][symbol])
+            if ("min_balance" in config):
+                for symbol in config["min_balance"]:
+                    self.min_balance[symbol] = Decimal(config["min_balance"][symbol])
+            if ("max_balance" in config):
+                for symbol in config["max_balance"]:
+                    self.max_balance[symbol] = Decimal(config["max_balance"][symbol])
             return
 
     def get_balances(self, symbols):
@@ -521,8 +523,6 @@ class Binanza(object):
                         a_quantity = Decimal(min_qty)
                     while (a_quantity < quantity):
                         a_quantity += qty_step
-                    # Subtract one step to respect min/max limits
-                    a_quantity -= qty_step
 
                 if (f["filterType"] == "MIN_NOTIONAL"):
                     # Set Decimal context to base symbol precision
@@ -592,11 +592,11 @@ class Binanza(object):
 
         # Calculate quote quantity to use for buy
         self.set_decimal_precision(symbol_pair, quote_symbol)
-        quote_quantity = self.balances[quote_symbol] * buy_batch
-
-        # Check if quote symbol has min balance set, and adjust quote quantity if needed
-        if (quote_symbol in self.min_balance and self.balances[quote_symbol] - quote_quantity < self.min_balance[quote_symbol]):
-            quote_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol]
+        free_quantity = self.balances[quote_symbol] - self.min_balance[quote_symbol] if (quote_symbol in self.min_balance) else self.balances[quote_symbol]
+        if (free_quantity <= Decimal(0.0)):
+            log.warning("  NO BUY: Minimum {} balance limit reached".format(quote_symbol))
+            return 
+        quote_quantity = free_quantity * buy_batch
 
         # Convert to base quantity
         base_quantity = quote_quantity / price
@@ -614,8 +614,8 @@ class Binanza(object):
             return
 
         # Recheck adjusted balances for min/max settings
-        if (quote_quantity > self.balances[quote_symbol] or (quote_symbol in self.min_balance and self.balances[quote_symbol] - quote_quantity < self.min_balance[quote_symbol])):
-            log.warning("  NO BUY: Minimum {} balance limit reached".format(quote_symbol))
+        if (quote_quantity > self.balances[quote_symbol]):
+            log.warning("  NO BUY: {} balance below minimum order limit".format(quote_symbol))
             return
         if (base_symbol in self.max_balance and self.balances[base_symbol] + base_quantity > self.max_balance[base_symbol]):
             log.warning("  NO BUY: Maximum {} balance limit reached".format(base_symbol))
@@ -662,13 +662,17 @@ class Binanza(object):
 
         # Get base quantity to sell
         self.set_decimal_precision(symbol_pair, base_symbol)
-        base_quantity = self.balances[base_symbol] * sell_batch
+        free_quantity = self.balances[base_symbol] - self.min_balance[base_symbol] if (base_symbol in self.min_balance) else self.balances[base_symbol]
+        if (free_quantity <= Decimal(0.0)):
+            log.warning("  NO SELL: Minimum {} balance limit reached".format(base_symbol))
+            return 
+        base_quantity = free_quantity * sell_batch
 
         # Check if base symbol has min balance set, and adjust base quantity if needed
         if (base_symbol in self.min_balance and self.balances[base_symbol] - base_quantity < self.min_balance[base_symbol]):
             base_quantity = self.balances[base_symbol] - self.min_balance[base_symbol]
 
-        # Convert to quote quantity for order check
+        # Convert to quote quantity
         quote_quantity = base_quantity * price
 
         # Check if quote symbol has max quantity set, and adjust quote quantity if needed
@@ -684,8 +688,8 @@ class Binanza(object):
             return
 
         # Recheck adjusted balances for min/max settings
-        if (base_quantity > self.balances[base_symbol] or (base_symbol in self.min_balance and self.balances[base_symbol] - base_quantity < self.min_balance[base_symbol])):
-            log.warning("  NO SELL: Minimum {} balance limit reached".format(base_symbol))
+        if (base_quantity > self.balances[base_symbol]):
+            log.warning("  NO SELL: {} balance below minimum order limit".format(base_symbol))
             return
         if (quote_symbol in self.max_balance and self.balances[quote_symbol] + quote_quantity > self.max_balance[quote_symbol]):
             log.warning("  NO BUY: Maximum {} balance limit reached".format(quote_symbol))
