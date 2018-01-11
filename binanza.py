@@ -486,6 +486,7 @@ class Binanza(object):
         quantity (Decimal) -- the quantity to check
         price (Decimal) -- the desired price to check
         """
+        log = logging.getLogger(self.log_name)
         symbol = base_symbol + quote_symbol
         a_quantity = None
         a_price = None
@@ -525,24 +526,29 @@ class Binanza(object):
                         a_quantity += qty_step
 
                 if (f["filterType"] == "MIN_NOTIONAL"):
+                    log.debug("{}".format(f))
                     # Set Decimal context to base symbol precision
                     getcontext().prec = s["baseAssetPrecision"]
                     min_notional = Decimal(f["minNotional"])
-            
+
             # Set quantity to min notional
-            if (min_notional is not None and (a_quantity is None or a_quantity < min_notional)):
-                a_quantity = min_notional
+            if (a_quantity is None):
+                a_quantity = qty_step
+            if (min_notional is not None and a_quantity * a_price < min_notional):
+                log.debug("  MIN_NOTIONAL: {}".format(min_notional))
+                while (a_quantity * a_price < min_notional):
+                    a_quantity += qty_step
 
             # Try to fix MIN_NOTIONAL filter errors
-            if (quote_symbol != "BTC"):
-                btc_symbol = quote_symbol + "BTC"
-                for ticker in self.tickers:
-                    if (ticker["symbol"] == btc_symbol):
-                        while(a_quantity * a_price * Decimal(ticker["price"]) < Decimal(0.001)):
-                            a_quantity += qty_step
-            else:
-                while (a_quantity * a_price < Decimal(0.001)):
-                    a_quantity += qty_step
+            #if (quote_symbol != "BTC"):
+            #    btc_symbol = quote_symbol + "BTC"
+            #    for ticker in self.tickers:
+            #        if (ticker["symbol"] == btc_symbol):
+            #            while(a_quantity * a_price * Decimal(ticker["price"]) < Decimal(0.001)):
+            #                a_quantity += qty_step
+            #else:
+            #    while (a_quantity * a_price < Decimal(0.001)):
+            #        a_quantity += qty_step
 
         return a_quantity, a_price
 
@@ -630,7 +636,7 @@ class Binanza(object):
         try:
             # Send order and append to database
             log.info("BUY ORDER: {} {} @ {} {}/{} (total: {} {})".format(base_quantity, base_symbol, price, quote_symbol, base_symbol, base_quantity * price, quote_symbol))
-            order = self.client.order_limit_buy(symbol=symbol, quantity=base_quantity, price=price, recvWindow=self.recvWindow)
+            order = self.client.order_limit_buy(symbol=symbol, quantity=base_quantity, price="{}".format(price), recvWindow=self.recvWindow)
             self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
         except BinanceAPIException as e:
             log.error(e.status_code)
@@ -702,7 +708,7 @@ class Binanza(object):
 
         try:
             log.info("SELL ORDER: {} {} @ {} {}/{} (total: {} {})".format(base_quantity, base_symbol, price, quote_symbol, base_symbol, base_quantity * price, quote_symbol))
-            order = self.client.order_limit_sell(symbol=symbol, quantity=base_quantity, price=price, recvWindow=self.recvWindow)
+            order = self.client.order_limit_sell(symbol=symbol, quantity=base_quantity, price="{}".format(price), recvWindow=self.recvWindow)
             self.db.add_order(order, base_symbol, quote_symbol, self.balances[base_symbol], self.balances[quote_symbol])
         except BinanceAPIException as e:
             log.error(e.status_code)
