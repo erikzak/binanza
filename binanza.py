@@ -526,7 +526,6 @@ class Binanza(object):
                         a_quantity += qty_step
 
                 if (f["filterType"] == "MIN_NOTIONAL"):
-                    log.debug("{}".format(f))
                     # Set Decimal context to base symbol precision
                     getcontext().prec = s["baseAssetPrecision"]
                     min_notional = Decimal(f["minNotional"])
@@ -535,20 +534,8 @@ class Binanza(object):
             if (a_quantity is None):
                 a_quantity = qty_step
             if (min_notional is not None and a_quantity * a_price < min_notional):
-                log.debug("  MIN_NOTIONAL: {}".format(min_notional))
                 while (a_quantity * a_price < min_notional):
                     a_quantity += qty_step
-
-            # Try to fix MIN_NOTIONAL filter errors
-            #if (quote_symbol != "BTC"):
-            #    btc_symbol = quote_symbol + "BTC"
-            #    for ticker in self.tickers:
-            #        if (ticker["symbol"] == btc_symbol):
-            #            while(a_quantity * a_price * Decimal(ticker["price"]) < Decimal(0.001)):
-            #                a_quantity += qty_step
-            #else:
-            #    while (a_quantity * a_price < Decimal(0.001)):
-            #        a_quantity += qty_step
 
         return a_quantity, a_price
 
